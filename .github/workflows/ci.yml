@@ -1,0 +1,187 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libyaml-dev ragel
+
+    - name: Build CLI tools
+      run: |
+        cd src
+        make dns cache spf zone
+
+    - name: Run tests
+      run: |
+        cd regress
+        make check
+
+    - name: Test CLI tools
+      run: |
+        cd src
+        ./dns -V
+        ./dns parse-domain example.com
+        ./dns print-arpa 192.168.1.1
+        ./cache -h
+        ./zone -h
+        ./spf -h
+
+  mingw:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mingw-w64
+
+    - name: Build CLI tools
+      run: |
+        cd src
+        make dns.exe
+
+  macos:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        brew install libyaml ragel
+
+    - name: Build CLI tools
+      run: |
+        cd src
+        make dns cache spf zone
+
+    - name: Run tests
+      env:
+        CPPFLAGS: -I/opt/homebrew/include
+        LDFLAGS: -L/opt/homebrew/lib
+      run: |
+        cd regress
+        make check
+
+    - name: Test CLI tools
+      run: |
+        cd src
+        ./dns -V
+        ./dns parse-domain example.com
+        ./dns print-arpa 192.168.1.1
+        ./cache -h
+        ./zone -h
+        ./spf -h
+
+  windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Install dependencies
+      run: |
+        vcpkg install getopt:x64-windows
+
+    - name: Build CLI tools
+      shell: cmd
+      run: |
+        cd src
+        clang-cl /nologo /W3 /DDNS_DEBUG=0 /DDNS_MAIN /D_CRT_SECURE_NO_WARNINGS /D_WINSOCK_DEPRECATED_NO_WARNINGS /I"%VCPKG_INSTALLATION_ROOT%\installed\x64-windows\include" dns.c /link /LIBPATH:"%VCPKG_INSTALLATION_ROOT%\installed\x64-windows\lib" getopt.lib ws2_32.lib iphlpapi.lib advapi32.lib /out:dns.exe
+
+    - name: Test CLI tools
+      shell: cmd
+      run: |
+        set PATH=%VCPKG_INSTALLATION_ROOT%\installed\x64-windows\bin;%PATH%
+        cd src
+        dns.exe -V
+        dns.exe parse-domain example.com
+        dns.exe print-arpa 192.168.1.1
+
+#  freebsd:
+#    runs-on: ubuntu-latest
+#    steps:
+#    - uses: actions/checkout@v4
+#    - name: Build and test on FreeBSD
+#      uses: vmactions/freebsd-vm@v1
+#      with:
+#        usesh: true
+#        run: |
+#          pkg install -y ragel libyaml
+#          cd src
+#          cc -std=gnu99 -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Werror -g -DDNS_DEBUG=0 -c dns.c -o dns.o
+#          cc -std=gnu99 -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Werror -g -DDNS_DEBUG=0 -DDNS_MAIN -o dns dns.c
+#          ./dns -V
+#          cc -std=gnu99 -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Werror -g -c cache.c -o cache.o
+#          cc -std=gnu99 -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Werror -g -DCACHE_MAIN -o cache cache.c
+#          ./cache -V
+#          cd ../regress
+#          make check
+
+#  openindiana:
+#    runs-on: ubuntu-latest
+#    steps:
+#    - uses: actions/checkout@v4
+#    - name: Build and test on OpenIndiana
+#      uses: vmactions/openindiana-vm@v1
+#      with:
+#        run: |
+#          pkg install developer/gcc
+#          cd src
+#          gcc -std=gnu99 -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Werror -g -DDNS_DEBUG=0 -c dns.c -o dns.o
+#          gcc -std=gnu99 -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Werror -g -DDNS_DEBUG=0 -DDNS_MAIN -o dns dns.c
+#          ./dns -V
+#          cc -std=gnu99 -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Werror -g -c cache.c -o cache.o
+#          cc -std=gnu99 -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Werror -g -DCACHE_MAIN -o cache cache.c
+#          ./cache -V
+#          make check
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install LLVM
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang llvm
+
+    - name: Build fuzzer
+      run: |
+        cd regress
+        clang -g -O1 -fsanitize=fuzzer,address,undefined \
+              -DDNS_DEBUG=0 -I../src -o fuzz_dns fuzz_dns.c
+
+    - name: Create corpus directory with existing crash files
+      run: |
+        mkdir -p regress/corpus
+        cp regress/crash-* regress/corpus/ 2>/dev/null || true
+
+    - name: Run fuzzer
+      run: |
+        cd regress
+        timeout 330 ./fuzz_dns corpus/ -max_len=4096 -max_total_time=300 || test $? -eq 124
+
+    - name: Upload crash artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuzz-crashes
+        path: |
+          regress/crash-*
+          regress/oom-*
+          regress/timeout-*
+        if-no-files-found: ignore
