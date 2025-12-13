@@ -3,7 +3,7 @@ cc-option = $(shell if $(CC) $(CFLAGS) $(1) -S -o /dev/null -xc /dev/null \
 	> /dev/null 2>&1; then echo "$(1)"; else echo "$(2)"; fi;)
 
 override CPPFLAGS := $(CPPFLAGS) -I../src -DSOCKET_DEBUG -DSOCKET_MAIN
-override CFLAGS   := $(CFLAGS) -std=gnu99 -Wall -Wno-unused-function -Wno-unused-parameter $(call cc-option, -Wno-initializer-overrides,) -O2 -g -fstack-protector
+override CFLAGS   := $(CFLAGS) -std=gnu99 -Wall -Wno-unused-function -Wno-unused-parameter $(call cc-option, -Wno-initializer-overrides, $(call cc-option, -Wno-override-init,)) -O2 -g -fstack-protector
 override LIBS     := -lssl -lcrypto
 
 ifeq ($(shell uname -s), Darwin)

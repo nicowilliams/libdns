@@ -179,7 +179,11 @@ struct so_options {
  *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-#define SA_UNIX defined(AF_UNIX) && !_WIN32
+#if defined(AF_UNIX) && !defined(_WIN32)
+#define SA_UNIX 1
+#else
+#define SA_UNIX 0
+#endif
 
 /*
  * GCC 4.4's strong aliasing constraints complain about casting through
