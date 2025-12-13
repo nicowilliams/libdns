@@ -1,3 +1,7 @@
+## About this fork
+
+There is nothing new here (yet).  I will try to fix all the compiler warnings / errors (it's 9 years-old code) and then _maybe_ integrate it straight into Heimdal.
+
 ## Home Page
 
 This project's home page and main repository is located at
