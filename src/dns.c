@@ -5360,6 +5360,12 @@ struct dns_hosts *dns_hosts_mortal(struct dns_hosts *hosts) {
 } /* dns_hosts_mortal() */
 
 
+#if _WIN32
+#define DNS_HOSTS_PATH "C:\\Windows\\System32\\drivers\\etc\\hosts"
+#else
+#define DNS_HOSTS_PATH "/etc/hosts"
+#endif
+
 struct dns_hosts *dns_hosts_local(int *error_) {
 	struct dns_hosts *hosts;
 	int error;
@@ -5367,7 +5373,7 @@ struct dns_hosts *dns_hosts_local(int *error_) {
 	if (!(hosts = dns_hosts_open(&error)))
 		goto error;
 
-	if ((error = dns_hosts_loadpath(hosts, "/etc/hosts")))
+	if ((error = dns_hosts_loadpath(hosts, DNS_HOSTS_PATH)))
 		goto error;
 
 	return hosts;
@@ -10307,6 +10313,7 @@ static struct dns_resolv_conf *resconf(void) {
 			panic("%s: %s", path, dns_strerror(error));
 	}
 
+#if !_WIN32
 	if (!MAIN.nssconf.count) {
 		path = "/etc/nsswitch.conf";
 
@@ -10315,6 +10322,7 @@ static struct dns_resolv_conf *resconf(void) {
 		else if (error != ENOENT)
 			panic("%s: %s", path, dns_strerror(error));
 	}
+#endif
 
 	/* apply command-line query flags */
 	if (MAIN.qflags.ad)
@@ -10336,11 +10344,11 @@ static struct dns_hosts *hosts(void) {
 		return hosts;
 
 	if (!MAIN.hosts.count) {
-		MAIN.hosts.path[MAIN.hosts.count++]	= "/etc/hosts";
+		MAIN.hosts.path[MAIN.hosts.count++]	= DNS_HOSTS_PATH;
 
 		/* Explicitly test dns_hosts_local() */
 		if (!(hosts = dns_hosts_local(&error)))
-			panic("%s: %s", "/etc/hosts", dns_strerror(error));
+			panic("%s: %s", DNS_HOSTS_PATH, dns_strerror(error));
 
 		return hosts;
 	}
