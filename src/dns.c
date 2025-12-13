@@ -1902,6 +1902,8 @@ static void dns_p_dump3(struct dns_packet *P, struct dns_rr_i *I, FILE *fp) {
 	fprintf(fp, ";;     tc : %s(%d)\n", (dns_header(P)->tc)? "TRUNCATED" : "NOT-TRUNCATED", dns_header(P)->tc);
 	fprintf(fp, ";;     rd : %s(%d)\n", (dns_header(P)->rd)? "RECURSION-DESIRED" : "RECURSION-NOT-DESIRED", dns_header(P)->rd);
 	fprintf(fp, ";;     ra : %s(%d)\n", (dns_header(P)->ra)? "RECURSION-ALLOWED" : "RECURSION-NOT-ALLOWED", dns_header(P)->ra);
+	fprintf(fp, ";;     ad : %s(%d)\n", (dns_header(P)->ad)? "AUTHENTICATED" : "NOT-AUTHENTICATED", dns_header(P)->ad);
+	fprintf(fp, ";;     cd : %s(%d)\n", (dns_header(P)->cd)? "CHECKING-DISABLED" : "CHECKING-ENABLED", dns_header(P)->cd);
 	fprintf(fp, ";;  rcode : %s(%d)\n", dns_strrcode(dns_p_rcode(P)), dns_p_rcode(P));
 
 	section	= 0;
@@ -1997,6 +1999,8 @@ enum dns_rcode dns_p_rcode(struct dns_packet *P) {
 
 #define DNS_Q_RD    0x1 /* recursion desired */
 #define DNS_Q_EDNS0 0x2 /* include OPT RR */
+#define DNS_Q_AD    0x4 /* RFC 4035: request authenticated data */
+#define DNS_Q_CD    0x8 /* RFC 4035: disable DNSSEC validation */
 
 static dns_error_t
 dns_q_make2(struct dns_packet **_Q, const char *qname, size_t qlen, enum dns_type qtype, enum dns_class qclass, int qflags)
@@ -2014,6 +2018,8 @@ dns_q_make2(struct dns_packet **_Q, const char *qname, size_t qlen, enum dns_typ
 		goto error;
 
 	dns_header(Q)->rd = !!(qflags & DNS_Q_RD);
+	dns_header(Q)->ad = !!(qflags & DNS_Q_AD);
+	dns_header(Q)->cd = !!(qflags & DNS_Q_CD);
 
 	if (qflags & DNS_Q_EDNS0) {
 		struct dns_opt opt = DNS_OPT_INIT(&opt);
@@ -4585,6 +4591,8 @@ enum dns_resconf_keyword {
 	DNS_RESCONF_ROTATE,
 	DNS_RESCONF_RECURSE,
 	DNS_RESCONF_SMART,
+	DNS_RESCONF_AD,
+	DNS_RESCONF_CD,
 	DNS_RESCONF_TCP,
 	DNS_RESCONF_TCPx,
 	DNS_RESCONF_INTERFACE,
@@ -4612,6 +4620,8 @@ static enum dns_resconf_keyword dns_resconf_keyword(const char *word) {
 		[DNS_RESCONF_ROTATE]		= "rotate",
 		[DNS_RESCONF_RECURSE]		= "recurse",
 		[DNS_RESCONF_SMART]		= "smart",
+		[DNS_RESCONF_AD]		= "ad",
+		[DNS_RESCONF_CD]		= "cd",
 		[DNS_RESCONF_TCP]		= "tcp",
 		[DNS_RESCONF_INTERFACE]		= "interface",
 		[DNS_RESCONF_ZERO]		= "0",
@@ -4835,6 +4845,14 @@ skip:
 					break;
 				case DNS_RESCONF_SMART:
 					resconf->options.smart		= 1;
+
+					break;
+				case DNS_RESCONF_AD:
+					resconf->options.ad		= 1;
+
+					break;
+				case DNS_RESCONF_CD:
+					resconf->options.cd		= 1;
 
 					break;
 				case DNS_RESCONF_TCP:
@@ -5536,6 +5554,10 @@ int dns_resconf_dump(struct dns_resolv_conf *resconf, FILE *fp) {
 		fprintf(fp, " recurse");
 	if (resconf->options.smart)
 		fprintf(fp, " smart");
+	if (resconf->options.ad)
+		fprintf(fp, " ad");
+	if (resconf->options.cd)
+		fprintf(fp, " cd");
 
 	switch (resconf->options.tcp) {
 	case DNS_RESCONF_TCP_ENABLE:
@@ -7086,6 +7108,10 @@ static void dns_res_frame_init(struct dns_resolver *R, struct dns_res_frame *fra
 			frame->qflags |= DNS_Q_RD;
 		if (R->resconf->options.edns0)
 			frame->qflags |= DNS_Q_EDNS0;
+		if (R->resconf->options.ad)
+			frame->qflags |= DNS_Q_AD;
+		if (R->resconf->options.cd)
+			frame->qflags |= DNS_Q_CD;
 	}
 } /* dns_res_frame_init() */
 
@@ -8909,6 +8935,11 @@ struct {
 	int (*sort)();
 
 	int verbose;
+
+	struct {
+		_Bool ad;
+		_Bool cd;
+	} qflags;
 } MAIN = {
 	.sort	= &dns_rr_i_packet,
 };
@@ -9060,6 +9091,12 @@ static struct dns_resolv_conf *resconf(void) {
 		else if (error != ENOENT)
 			panic("%s: %s", path, dns_strerror(error));
 	}
+
+	/* apply command-line query flags */
+	if (MAIN.qflags.ad)
+		resconf->options.ad = 1;
+	if (MAIN.qflags.cd)
+		resconf->options.cd = 1;
 
 	return resconf;
 } /* resconf() */
@@ -9861,6 +9898,8 @@ static void print_usage(const char *progname, FILE *fp) {
 		"  -q QNAME  Query name\n"
 		"  -t QTYPE  Query type\n"
 		"  -s HOW    Sort records\n"
+		"  -A        Set AD bit (request authenticated data)\n"
+		"  -D        Set CD bit (disable DNSSEC validation)\n"
 		"  -v        Be more verbose (-vv show packets; -vvv hexdump packets)\n"
 		"  -V        Print version info\n"
 		"  -h        Print this usage message\n"
@@ -9905,7 +9944,7 @@ int main(int argc, char **argv) {
 	unsigned i;
 	int ch;
 
-	while (-1 != (ch = getopt(argc, argv, "q:t:c:n:l:z:s:vVh"))) {
+	while (-1 != (ch = getopt(argc, argv, "q:t:c:n:l:z:s:ADvVh"))) {
 		switch (ch) {
 		case 'c':
 			assert(MAIN.resconf.count < lengthof(MAIN.resconf.path));
@@ -9962,6 +10001,14 @@ int main(int argc, char **argv) {
 				MAIN.sort	= &dns_rr_i_order;
 			else
 				panic("%s: invalid sort method", optarg);
+
+			break;
+		case 'A':
+			MAIN.qflags.ad	= 1;
+
+			break;
+		case 'D':
+			MAIN.qflags.cd	= 1;
 
 			break;
 		case 'v':

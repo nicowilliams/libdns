@@ -362,7 +362,9 @@ struct dns_header {
 		unsigned rd:1;
 
 		unsigned ra:1;
-		unsigned unused:3;
+		unsigned z:1;
+		unsigned ad:1;  /* RFC 4035: Authenticated Data */
+		unsigned cd:1;  /* RFC 4035: Checking Disabled */
 		unsigned rcode:4;
 #else
 		unsigned rd:1;
@@ -372,7 +374,9 @@ struct dns_header {
 		unsigned qr:1;
 
 		unsigned rcode:4;
-		unsigned unused:3;
+		unsigned cd:1;  /* RFC 4035: Checking Disabled */
+		unsigned ad:1;  /* RFC 4035: Authenticated Data */
+		unsigned z:1;
 		unsigned ra:1;
 #endif
 
@@ -919,6 +923,10 @@ struct dns_resolv_conf {
 			DNS_RESCONF_TCP_ONLY,
 			DNS_RESCONF_TCP_DISABLE,
 		} tcp;
+
+		_Bool ad;  /* RFC 4035: request authenticated data */
+
+		_Bool cd;  /* RFC 4035: disable DNSSEC validation */
 	} options;
 
 	struct sockaddr_storage iface;
