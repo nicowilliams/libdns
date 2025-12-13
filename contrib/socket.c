@@ -202,7 +202,6 @@ static void so_trace(enum so_trace event, int fd, const struct addrinfo *host, .
 	char addr[64], who[256];
 	in_port_t port;
 	va_list ap;
-	SSL *ctx;
 	const void *data;
 	size_t count;
 	const char *fmt;
@@ -240,7 +239,7 @@ static void so_trace(enum so_trace event, int fd, const struct addrinfo *host, .
 
 		break;
 	case SO_T_STARTTLS:
-		ctx = va_arg(ap, SSL *);
+		(void)va_arg(ap, SSL *); /* ctx - unused */
 		fmt = va_arg(ap, char *);
 
 		fprintf(stderr, "starttls(%s): ", who);
@@ -1633,16 +1632,24 @@ int so_starttls(struct socket *so, SSL_CTX *ctx) {
 		goto error;
 
 	/*
-	 * NOTE: SSLv3_server_method()->ssl_connect should be a reference to
-	 * OpenSSL's internal ssl_undefined_function().
+	 * Detect whether the SSL context is configured for server mode.
 	 *
-	 * Server methods such as SSLv23_server_method(), etc. should have
-	 * their .ssl_connect method set to this value.
+	 * For OpenSSL < 1.1.0, we checked internal method pointers, but
+	 * that API is no longer available (SSL_METHOD is now opaque and
+	 * SSLv3_server_method() was removed).
+	 *
+	 * For OpenSSL 1.1.0+, we default to client mode. Server sockets
+	 * should have so->todo containing SO_S_LISTEN if so_listen() was
+	 * called, which we use to detect server mode.
 	 */
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	(void)method;
+	so->ssl.accept = (so->todo & SO_S_LISTEN) ? 1 : 0;
+#else
 	method = SSL_get_ssl_method(so->ssl.ctx);
-
 	if (!method->ssl_connect || method->ssl_connect == SSLv3_server_method()->ssl_connect)
 		so->ssl.accept = 1;
+#endif
 
 	if (tmp)
 		SSL_CTX_free(tmp);
