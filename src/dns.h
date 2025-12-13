@@ -251,9 +251,19 @@ enum dns_type {
 	DNS_T_AAAA	= 28,
 	DNS_T_SRV	= 33,
 	DNS_T_OPT	= 41,
+	DNS_T_DS	= 43,
 	DNS_T_SSHFP	= 44,
+	DNS_T_RRSIG	= 46,
+	DNS_T_NSEC	= 47,
+	DNS_T_DNSKEY	= 48,
+	DNS_T_NSEC3	= 50,
+	DNS_T_TLSA	= 52,
+	DNS_T_SVCB	= 64,
+	DNS_T_HTTPS	= 65,
 	DNS_T_SPF	= 99,
-	DNS_T_AXFR      = 252,
+	DNS_T_AXFR	= 252,
+	DNS_T_CAA	= 257,
+	DNS_T_URI	= 256,
 
 	DNS_T_ALL	= 255
 }; /* enum dns_type */
@@ -801,6 +811,261 @@ DNS_PUBLIC size_t dns_sshfp_print(void *, size_t, struct dns_sshfp *);
 
 
 /*
+ * D S  R E S O U R C E  R E C O R D  (RFC 4034)
+ */
+
+#ifndef DNS_DS_DIGEST_MAXLEN
+#define DNS_DS_DIGEST_MAXLEN 64  /* SHA-384 = 48 bytes, allow room for future */
+#endif
+
+struct dns_ds {
+	uint16_t keytag;
+	uint8_t algorithm;
+	uint8_t digtype;
+	unsigned char digest[DNS_DS_DIGEST_MAXLEN];
+	size_t digestlen;
+}; /* struct dns_ds */
+
+DNS_PUBLIC int dns_ds_parse(struct dns_ds *, struct dns_rr *, struct dns_packet *);
+
+DNS_PUBLIC int dns_ds_push(struct dns_packet *, struct dns_ds *);
+
+DNS_PUBLIC int dns_ds_cmp(const struct dns_ds *, const struct dns_ds *);
+
+DNS_PUBLIC size_t dns_ds_print(void *, size_t, struct dns_ds *);
+
+
+/*
+ * D N S K E Y  R E S O U R C E  R E C O R D  (RFC 4034)
+ */
+
+#ifndef DNS_DNSKEY_PUBKEY_MAXLEN
+#define DNS_DNSKEY_PUBKEY_MAXLEN 2048
+#endif
+
+struct dns_dnskey {
+	uint16_t flags;     /* 256=ZSK, 257=KSK */
+	uint8_t protocol;   /* must be 3 */
+	uint8_t algorithm;
+	unsigned char pubkey[DNS_DNSKEY_PUBKEY_MAXLEN];
+	size_t pubkeylen;
+}; /* struct dns_dnskey */
+
+DNS_PUBLIC int dns_dnskey_parse(struct dns_dnskey *, struct dns_rr *, struct dns_packet *);
+
+DNS_PUBLIC int dns_dnskey_push(struct dns_packet *, struct dns_dnskey *);
+
+DNS_PUBLIC int dns_dnskey_cmp(const struct dns_dnskey *, const struct dns_dnskey *);
+
+DNS_PUBLIC size_t dns_dnskey_print(void *, size_t, struct dns_dnskey *);
+
+
+/*
+ * R R S I G  R E S O U R C E  R E C O R D  (RFC 4034)
+ */
+
+#ifndef DNS_RRSIG_SIG_MAXLEN
+#define DNS_RRSIG_SIG_MAXLEN 2048
+#endif
+
+struct dns_rrsig {
+	uint16_t covered;    /* type covered */
+	uint8_t algorithm;
+	uint8_t labels;
+	uint32_t origttl;
+	uint32_t expiration;
+	uint32_t inception;
+	uint16_t keytag;
+	char signer[DNS_D_MAXNAME + 1];
+	unsigned char signature[DNS_RRSIG_SIG_MAXLEN];
+	size_t siglen;
+}; /* struct dns_rrsig */
+
+DNS_PUBLIC int dns_rrsig_parse(struct dns_rrsig *, struct dns_rr *, struct dns_packet *);
+
+DNS_PUBLIC int dns_rrsig_push(struct dns_packet *, struct dns_rrsig *);
+
+DNS_PUBLIC int dns_rrsig_cmp(const struct dns_rrsig *, const struct dns_rrsig *);
+
+DNS_PUBLIC size_t dns_rrsig_print(void *, size_t, struct dns_rrsig *);
+
+
+/*
+ * N S E C  R E S O U R C E  R E C O R D  (RFC 4034)
+ */
+
+#ifndef DNS_NSEC_TYPEMAP_MAXLEN
+#define DNS_NSEC_TYPEMAP_MAXLEN 8192  /* type bitmap can be large */
+#endif
+
+struct dns_nsec {
+	char next[DNS_D_MAXNAME + 1];
+	unsigned char typemap[DNS_NSEC_TYPEMAP_MAXLEN];
+	size_t typemaplen;
+}; /* struct dns_nsec */
+
+DNS_PUBLIC int dns_nsec_parse(struct dns_nsec *, struct dns_rr *, struct dns_packet *);
+
+DNS_PUBLIC int dns_nsec_push(struct dns_packet *, struct dns_nsec *);
+
+DNS_PUBLIC int dns_nsec_cmp(const struct dns_nsec *, const struct dns_nsec *);
+
+DNS_PUBLIC size_t dns_nsec_print(void *, size_t, struct dns_nsec *);
+
+DNS_PUBLIC _Bool dns_nsec_hastype(const struct dns_nsec *, enum dns_type);
+
+
+/*
+ * N S E C 3  R E S O U R C E  R E C O R D  (RFC 5155)
+ */
+
+#ifndef DNS_NSEC3_SALT_MAXLEN
+#define DNS_NSEC3_SALT_MAXLEN 255
+#endif
+
+#ifndef DNS_NSEC3_HASH_MAXLEN
+#define DNS_NSEC3_HASH_MAXLEN 64  /* SHA-1 = 20 bytes, allow room */
+#endif
+
+struct dns_nsec3 {
+	uint8_t algorithm;
+	uint8_t flags;
+	uint16_t iterations;
+	unsigned char salt[DNS_NSEC3_SALT_MAXLEN];
+	size_t saltlen;
+	unsigned char nexthash[DNS_NSEC3_HASH_MAXLEN];
+	size_t nexthashlen;
+	unsigned char typemap[DNS_NSEC_TYPEMAP_MAXLEN];
+	size_t typemaplen;
+}; /* struct dns_nsec3 */
+
+DNS_PUBLIC int dns_nsec3_parse(struct dns_nsec3 *, struct dns_rr *, struct dns_packet *);
+
+DNS_PUBLIC int dns_nsec3_push(struct dns_packet *, struct dns_nsec3 *);
+
+DNS_PUBLIC int dns_nsec3_cmp(const struct dns_nsec3 *, const struct dns_nsec3 *);
+
+DNS_PUBLIC size_t dns_nsec3_print(void *, size_t, struct dns_nsec3 *);
+
+DNS_PUBLIC _Bool dns_nsec3_hastype(const struct dns_nsec3 *, enum dns_type);
+
+
+/*
+ * T L S A  R E S O U R C E  R E C O R D  (RFC 6698)
+ */
+
+#ifndef DNS_TLSA_DATA_MAXLEN
+#define DNS_TLSA_DATA_MAXLEN 2048
+#endif
+
+struct dns_tlsa {
+	uint8_t usage;      /* 0=CA, 1=Service, 2=TrustAnchor, 3=DomainIssued */
+	uint8_t selector;   /* 0=Full, 1=SubjectPublicKeyInfo */
+	uint8_t matchtype;  /* 0=Full, 1=SHA-256, 2=SHA-512 */
+	unsigned char data[DNS_TLSA_DATA_MAXLEN];
+	size_t datalen;
+}; /* struct dns_tlsa */
+
+DNS_PUBLIC int dns_tlsa_parse(struct dns_tlsa *, struct dns_rr *, struct dns_packet *);
+
+DNS_PUBLIC int dns_tlsa_push(struct dns_packet *, struct dns_tlsa *);
+
+DNS_PUBLIC int dns_tlsa_cmp(const struct dns_tlsa *, const struct dns_tlsa *);
+
+DNS_PUBLIC size_t dns_tlsa_print(void *, size_t, struct dns_tlsa *);
+
+
+/*
+ * C A A  R E S O U R C E  R E C O R D  (RFC 8659)
+ */
+
+#ifndef DNS_CAA_TAG_MAXLEN
+#define DNS_CAA_TAG_MAXLEN 255
+#endif
+
+#ifndef DNS_CAA_VALUE_MAXLEN
+#define DNS_CAA_VALUE_MAXLEN 4096
+#endif
+
+struct dns_caa {
+	uint8_t flags;
+	char tag[DNS_CAA_TAG_MAXLEN + 1];
+	unsigned char value[DNS_CAA_VALUE_MAXLEN];
+	size_t valuelen;
+}; /* struct dns_caa */
+
+DNS_PUBLIC int dns_caa_parse(struct dns_caa *, struct dns_rr *, struct dns_packet *);
+
+DNS_PUBLIC int dns_caa_push(struct dns_packet *, struct dns_caa *);
+
+DNS_PUBLIC int dns_caa_cmp(const struct dns_caa *, const struct dns_caa *);
+
+DNS_PUBLIC size_t dns_caa_print(void *, size_t, struct dns_caa *);
+
+
+/*
+ * U R I  R E S O U R C E  R E C O R D  (RFC 7553)
+ */
+
+#ifndef DNS_URI_TARGET_MAXLEN
+#define DNS_URI_TARGET_MAXLEN 4096
+#endif
+
+struct dns_uri {
+	uint16_t priority;
+	uint16_t weight;
+	char target[DNS_URI_TARGET_MAXLEN + 1];
+}; /* struct dns_uri */
+
+DNS_PUBLIC int dns_uri_parse(struct dns_uri *, struct dns_rr *, struct dns_packet *);
+
+DNS_PUBLIC int dns_uri_push(struct dns_packet *, struct dns_uri *);
+
+DNS_PUBLIC int dns_uri_cmp(const struct dns_uri *, const struct dns_uri *);
+
+DNS_PUBLIC size_t dns_uri_print(void *, size_t, struct dns_uri *);
+
+
+/*
+ * S V C B / H T T P S  R E S O U R C E  R E C O R D  (RFC 9460)
+ */
+
+#ifndef DNS_SVCB_PARAM_MAXLEN
+#define DNS_SVCB_PARAM_MAXLEN 8192
+#endif
+
+/* SvcParamKey values */
+enum dns_svcb_key {
+	DNS_SVCB_KEY_MANDATORY      = 0,
+	DNS_SVCB_KEY_ALPN           = 1,
+	DNS_SVCB_KEY_NO_DEFAULT_ALPN = 2,
+	DNS_SVCB_KEY_PORT           = 3,
+	DNS_SVCB_KEY_IPV4HINT       = 4,
+	DNS_SVCB_KEY_ECH            = 5,
+	DNS_SVCB_KEY_IPV6HINT       = 6,
+	DNS_SVCB_KEY_DOHPATH        = 7,
+	DNS_SVCB_KEY_OHTTP          = 8,
+};
+
+struct dns_svcb {
+	uint16_t priority;
+	char target[DNS_D_MAXNAME + 1];
+	unsigned char params[DNS_SVCB_PARAM_MAXLEN];
+	size_t paramslen;
+}; /* struct dns_svcb */
+
+DNS_PUBLIC int dns_svcb_parse(struct dns_svcb *, struct dns_rr *, struct dns_packet *);
+
+DNS_PUBLIC int dns_svcb_push(struct dns_packet *, struct dns_svcb *);
+
+DNS_PUBLIC int dns_svcb_cmp(const struct dns_svcb *, const struct dns_svcb *);
+
+DNS_PUBLIC size_t dns_svcb_print(void *, size_t, struct dns_svcb *);
+
+DNS_PUBLIC _Bool dns_svcb_getparam(const struct dns_svcb *, enum dns_svcb_key, const unsigned char **, size_t *);
+
+
+/*
  * TXT  R E S O U R C E  R E C O R D
  */
 
@@ -839,6 +1104,15 @@ union dns_any {
 	struct dns_srv srv;
 	struct dns_opt opt;
 	struct dns_sshfp sshfp;
+	struct dns_ds ds;
+	struct dns_dnskey dnskey;
+	struct dns_rrsig rrsig;
+	struct dns_nsec nsec;
+	struct dns_nsec3 nsec3;
+	struct dns_tlsa tlsa;
+	struct dns_caa caa;
+	struct dns_uri uri;
+	struct dns_svcb svcb, https;
 	struct dns_txt txt, spf, rdata;
 }; /* union dns_any */
 

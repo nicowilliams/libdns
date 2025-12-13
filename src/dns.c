@@ -3859,6 +3859,1135 @@ size_t dns_sshfp_print(void *_dst, size_t lim, struct dns_sshfp *fp) {
 } /* dns_sshfp_print() */
 
 
+/*
+ * D S  R E S O U R C E  R E C O R D
+ */
+
+int dns_ds_parse(struct dns_ds *ds, struct dns_rr *rr, struct dns_packet *P) {
+	unsigned p = rr->rd.p, pe;
+
+	/* Validate RDATA bounds against packet */
+	if (rr->rd.len > P->end - rr->rd.p)
+		return DNS_EILLEGAL;
+	pe = rr->rd.p + rr->rd.len;
+
+	if (rr->rd.len < 4)
+		return DNS_EILLEGAL;
+
+	ds->keytag = ((unsigned)P->data[p] << 8) | P->data[p+1];
+	p += 2;
+	ds->algorithm = P->data[p++];
+	ds->digtype = P->data[p++];
+
+	ds->digestlen = pe - p;
+	if (ds->digestlen > sizeof ds->digest)
+		ds->digestlen = sizeof ds->digest;
+	memcpy(ds->digest, &P->data[p], ds->digestlen);
+
+	return 0;
+} /* dns_ds_parse() */
+
+
+int dns_ds_push(struct dns_packet *P, struct dns_ds *ds) {
+	unsigned p = P->end, pe = P->size;
+
+	if (pe - p < 4 + ds->digestlen)
+		return DNS_ENOBUFS;
+
+	P->data[p++] = (ds->keytag >> 8) & 0xff;
+	P->data[p++] = ds->keytag & 0xff;
+	P->data[p++] = ds->algorithm;
+	P->data[p++] = ds->digtype;
+	memcpy(&P->data[p], ds->digest, ds->digestlen);
+	p += ds->digestlen;
+
+	P->end = p;
+
+	return 0;
+} /* dns_ds_push() */
+
+
+int dns_ds_cmp(const struct dns_ds *a, const struct dns_ds *b) {
+	int cmp;
+
+	if ((cmp = (int)a->keytag - (int)b->keytag))
+		return cmp;
+	if ((cmp = (int)a->algorithm - (int)b->algorithm))
+		return cmp;
+	if ((cmp = (int)a->digtype - (int)b->digtype))
+		return cmp;
+	if ((cmp = (int)a->digestlen - (int)b->digestlen))
+		return cmp;
+
+	return memcmp(a->digest, b->digest, a->digestlen);
+} /* dns_ds_cmp() */
+
+
+size_t dns_ds_print(void *_dst, size_t lim, struct dns_ds *ds) {
+	static const unsigned char hex[16] = "0123456789ABCDEF";
+	struct dns_buf dst = DNS_B_INTO(_dst, lim);
+	size_t i;
+
+	dns_b_fmtju(&dst, ds->keytag, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, ds->algorithm, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, ds->digtype, 0);
+	dns_b_putc(&dst, ' ');
+
+	for (i = 0; i < ds->digestlen; i++) {
+		dns_b_putc(&dst, hex[0x0f & (ds->digest[i] >> 4)]);
+		dns_b_putc(&dst, hex[0x0f & (ds->digest[i] >> 0)]);
+	}
+
+	return dns_b_strllen(&dst);
+} /* dns_ds_print() */
+
+
+/*
+ * D N S K E Y  R E S O U R C E  R E C O R D
+ */
+
+int dns_dnskey_parse(struct dns_dnskey *key, struct dns_rr *rr, struct dns_packet *P) {
+	unsigned p = rr->rd.p, pe;
+
+	/* Validate RDATA bounds against packet */
+	if (rr->rd.len > P->end - rr->rd.p)
+		return DNS_EILLEGAL;
+	pe = rr->rd.p + rr->rd.len;
+
+	if (rr->rd.len < 4)
+		return DNS_EILLEGAL;
+
+	key->flags = ((unsigned)P->data[p] << 8) | P->data[p+1];
+	p += 2;
+	key->protocol = P->data[p++];
+	key->algorithm = P->data[p++];
+
+	key->pubkeylen = pe - p;
+	if (key->pubkeylen > sizeof key->pubkey)
+		key->pubkeylen = sizeof key->pubkey;
+	memcpy(key->pubkey, &P->data[p], key->pubkeylen);
+
+	return 0;
+} /* dns_dnskey_parse() */
+
+
+int dns_dnskey_push(struct dns_packet *P, struct dns_dnskey *key) {
+	unsigned p = P->end, pe = P->size;
+
+	if (pe - p < 4 + key->pubkeylen)
+		return DNS_ENOBUFS;
+
+	P->data[p++] = (key->flags >> 8) & 0xff;
+	P->data[p++] = key->flags & 0xff;
+	P->data[p++] = key->protocol;
+	P->data[p++] = key->algorithm;
+	memcpy(&P->data[p], key->pubkey, key->pubkeylen);
+	p += key->pubkeylen;
+
+	P->end = p;
+
+	return 0;
+} /* dns_dnskey_push() */
+
+
+int dns_dnskey_cmp(const struct dns_dnskey *a, const struct dns_dnskey *b) {
+	int cmp;
+
+	if ((cmp = (int)a->flags - (int)b->flags))
+		return cmp;
+	if ((cmp = (int)a->protocol - (int)b->protocol))
+		return cmp;
+	if ((cmp = (int)a->algorithm - (int)b->algorithm))
+		return cmp;
+	if ((cmp = (int)a->pubkeylen - (int)b->pubkeylen))
+		return cmp;
+
+	return memcmp(a->pubkey, b->pubkey, a->pubkeylen);
+} /* dns_dnskey_cmp() */
+
+
+static size_t dns_base64_encode(void *_dst, size_t lim, const unsigned char *src, size_t len) {
+	static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	struct dns_buf dst = DNS_B_INTO(_dst, lim);
+	size_t i;
+
+	for (i = 0; i + 2 < len; i += 3) {
+		dns_b_putc(&dst, b64[src[i] >> 2]);
+		dns_b_putc(&dst, b64[((src[i] & 0x03) << 4) | (src[i+1] >> 4)]);
+		dns_b_putc(&dst, b64[((src[i+1] & 0x0f) << 2) | (src[i+2] >> 6)]);
+		dns_b_putc(&dst, b64[src[i+2] & 0x3f]);
+	}
+
+	if (i < len) {
+		dns_b_putc(&dst, b64[src[i] >> 2]);
+		if (i + 1 < len) {
+			dns_b_putc(&dst, b64[((src[i] & 0x03) << 4) | (src[i+1] >> 4)]);
+			dns_b_putc(&dst, b64[(src[i+1] & 0x0f) << 2]);
+		} else {
+			dns_b_putc(&dst, b64[(src[i] & 0x03) << 4]);
+			dns_b_putc(&dst, '=');
+		}
+		dns_b_putc(&dst, '=');
+	}
+
+	return dns_b_strllen(&dst);
+} /* dns_base64_encode() */
+
+
+size_t dns_dnskey_print(void *_dst, size_t lim, struct dns_dnskey *key) {
+	struct dns_buf dst = DNS_B_INTO(_dst, lim);
+	char b64buf[4096];
+	size_t b64len;
+
+	dns_b_fmtju(&dst, key->flags, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, key->protocol, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, key->algorithm, 0);
+	dns_b_putc(&dst, ' ');
+
+	b64len = dns_base64_encode(b64buf, sizeof b64buf, key->pubkey, key->pubkeylen);
+	dns_b_put(&dst, b64buf, DNS_PP_MIN(b64len, sizeof b64buf - 1));
+
+	return dns_b_strllen(&dst);
+} /* dns_dnskey_print() */
+
+
+/*
+ * R R S I G  R E S O U R C E  R E C O R D
+ */
+
+int dns_rrsig_parse(struct dns_rrsig *sig, struct dns_rr *rr, struct dns_packet *P) {
+	unsigned p = rr->rd.p, pe;
+	int error;
+
+	/* Validate RDATA bounds against packet */
+	if (rr->rd.len > P->end - rr->rd.p)
+		return DNS_EILLEGAL;
+	pe = rr->rd.p + rr->rd.len;
+
+	if (rr->rd.len < 18)
+		return DNS_EILLEGAL;
+
+	sig->covered = ((unsigned)P->data[p] << 8) | P->data[p+1];
+	p += 2;
+	sig->algorithm = P->data[p++];
+	sig->labels = P->data[p++];
+	sig->origttl = ((uint32_t)P->data[p] << 24) | ((uint32_t)P->data[p+1] << 16) |
+	               ((uint32_t)P->data[p+2] << 8) | P->data[p+3];
+	p += 4;
+	sig->expiration = ((uint32_t)P->data[p] << 24) | ((uint32_t)P->data[p+1] << 16) |
+	                  ((uint32_t)P->data[p+2] << 8) | P->data[p+3];
+	p += 4;
+	sig->inception = ((uint32_t)P->data[p] << 24) | ((uint32_t)P->data[p+1] << 16) |
+	                 ((uint32_t)P->data[p+2] << 8) | P->data[p+3];
+	p += 4;
+	sig->keytag = ((unsigned)P->data[p] << 8) | P->data[p+1];
+	p += 2;
+
+	/* Parse signer name */
+	if (!dns_d_expand(sig->signer, sizeof sig->signer, p, P, &error))
+		return error;
+	p = dns_d_skip(p, P);
+
+	/* Validate p is within RDATA bounds (check for underflow from skip too) */
+	if (p < rr->rd.p || p > pe)
+		return DNS_EILLEGAL;
+
+	/* Copy signature */
+	sig->siglen = pe - p;
+	if (sig->siglen > sizeof sig->signature)
+		sig->siglen = sizeof sig->signature;
+	memcpy(sig->signature, &P->data[p], sig->siglen);
+
+	return 0;
+} /* dns_rrsig_parse() */
+
+
+int dns_rrsig_push(struct dns_packet *P, struct dns_rrsig *sig) {
+	unsigned p = P->end, pe = P->size;
+	int error;
+
+	if (pe - p < 18)
+		return DNS_ENOBUFS;
+
+	P->data[p++] = (sig->covered >> 8) & 0xff;
+	P->data[p++] = sig->covered & 0xff;
+	P->data[p++] = sig->algorithm;
+	P->data[p++] = sig->labels;
+	P->data[p++] = (sig->origttl >> 24) & 0xff;
+	P->data[p++] = (sig->origttl >> 16) & 0xff;
+	P->data[p++] = (sig->origttl >> 8) & 0xff;
+	P->data[p++] = sig->origttl & 0xff;
+	P->data[p++] = (sig->expiration >> 24) & 0xff;
+	P->data[p++] = (sig->expiration >> 16) & 0xff;
+	P->data[p++] = (sig->expiration >> 8) & 0xff;
+	P->data[p++] = sig->expiration & 0xff;
+	P->data[p++] = (sig->inception >> 24) & 0xff;
+	P->data[p++] = (sig->inception >> 16) & 0xff;
+	P->data[p++] = (sig->inception >> 8) & 0xff;
+	P->data[p++] = sig->inception & 0xff;
+	P->data[p++] = (sig->keytag >> 8) & 0xff;
+	P->data[p++] = sig->keytag & 0xff;
+
+	P->end = p;
+
+	/* Push signer name */
+	if ((error = dns_d_push(P, sig->signer, strlen(sig->signer))))
+		return error;
+	p = P->end;
+
+	/* Push signature */
+	if (pe - p < sig->siglen)
+		return DNS_ENOBUFS;
+	memcpy(&P->data[p], sig->signature, sig->siglen);
+	P->end = p + sig->siglen;
+
+	return 0;
+} /* dns_rrsig_push() */
+
+
+int dns_rrsig_cmp(const struct dns_rrsig *a, const struct dns_rrsig *b) {
+	int cmp;
+
+	if ((cmp = (int)a->covered - (int)b->covered))
+		return cmp;
+	if ((cmp = (int)a->algorithm - (int)b->algorithm))
+		return cmp;
+	if ((cmp = (int)a->labels - (int)b->labels))
+		return cmp;
+	if ((cmp = strcasecmp(a->signer, b->signer)))
+		return cmp;
+	if ((cmp = (int)a->keytag - (int)b->keytag))
+		return cmp;
+
+	return 0;
+} /* dns_rrsig_cmp() */
+
+
+size_t dns_rrsig_print(void *_dst, size_t lim, struct dns_rrsig *sig) {
+	struct dns_buf dst = DNS_B_INTO(_dst, lim);
+	char b64buf[4096];
+	size_t b64len;
+
+	/* Type covered */
+	dns_b_puts(&dst, dns_strtype(sig->covered));
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, sig->algorithm, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, sig->labels, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, sig->origttl, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, sig->expiration, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, sig->inception, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, sig->keytag, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_puts(&dst, sig->signer);
+	dns_b_putc(&dst, ' ');
+
+	b64len = dns_base64_encode(b64buf, sizeof b64buf, sig->signature, sig->siglen);
+	dns_b_put(&dst, b64buf, DNS_PP_MIN(b64len, sizeof b64buf - 1));
+
+	return dns_b_strllen(&dst);
+} /* dns_rrsig_print() */
+
+
+/*
+ * N S E C  R E S O U R C E  R E C O R D
+ */
+
+int dns_nsec_parse(struct dns_nsec *nsec, struct dns_rr *rr, struct dns_packet *P) {
+	unsigned p = rr->rd.p;
+	int error;
+
+	/* Validate RDATA bounds against packet */
+	if (rr->rd.len > P->end - rr->rd.p)
+		return DNS_EILLEGAL;
+
+	/* Parse next domain name */
+	if (!dns_d_expand(nsec->next, sizeof nsec->next, p, P, &error))
+		return error;
+	p = dns_d_skip(p, P);
+
+	/* Validate p is within RDATA bounds (check for overflow too) */
+	if (p < rr->rd.p || p > rr->rd.p + rr->rd.len)
+		return DNS_EILLEGAL;
+
+	/* Copy type bitmap */
+	nsec->typemaplen = (rr->rd.p + rr->rd.len) - p;
+	if (nsec->typemaplen > sizeof nsec->typemap)
+		nsec->typemaplen = sizeof nsec->typemap;
+	memcpy(nsec->typemap, &P->data[p], nsec->typemaplen);
+
+	return 0;
+} /* dns_nsec_parse() */
+
+
+int dns_nsec_push(struct dns_packet *P, struct dns_nsec *nsec) {
+	unsigned p = P->end, pe = P->size;
+	int error;
+
+	/* Push next domain name */
+	if ((error = dns_d_push(P, nsec->next, strlen(nsec->next))))
+		return error;
+	p = P->end;
+
+	/* Push type bitmap */
+	if (pe - p < nsec->typemaplen)
+		return DNS_ENOBUFS;
+	memcpy(&P->data[p], nsec->typemap, nsec->typemaplen);
+	P->end = p + nsec->typemaplen;
+
+	return 0;
+} /* dns_nsec_push() */
+
+
+int dns_nsec_cmp(const struct dns_nsec *a, const struct dns_nsec *b) {
+	return strcasecmp(a->next, b->next);
+} /* dns_nsec_cmp() */
+
+
+_Bool dns_nsec_hastype(const struct dns_nsec *nsec, enum dns_type type) {
+	unsigned window, offset, byte, bit;
+	const unsigned char *p, *pe;
+
+	p = nsec->typemap;
+	pe = p + nsec->typemaplen;
+
+	while (p + 2 <= pe) {
+		window = *p++;
+		offset = *p++;
+		if (p + offset > pe)
+			break;
+
+		if ((unsigned)type >= window * 256 && (unsigned)type < (window + 1) * 256) {
+			unsigned tbit = (unsigned)type - window * 256;
+			byte = tbit / 8;
+			bit = 7 - (tbit % 8);
+			if (byte < offset && (p[byte] & (1 << bit)))
+				return 1;
+		}
+		p += offset;
+	}
+
+	return 0;
+} /* dns_nsec_hastype() */
+
+
+static size_t dns_typemap_print(void *_dst, size_t lim, const unsigned char *typemap, size_t typemaplen) {
+	struct dns_buf dst = DNS_B_INTO(_dst, lim);
+	const unsigned char *p = typemap, *pe = typemap + typemaplen;
+	int first = 1;
+
+	while (p + 2 <= pe) {
+		unsigned window = *p++;
+		unsigned len = *p++;
+		unsigned i, j;
+
+		/* Validate len doesn't exceed remaining buffer */
+		if (len > (size_t)(pe - p))
+			break;
+
+		for (i = 0; i < len; i++) {
+			for (j = 0; j < 8; j++) {
+				if (p[i] & (1 << (7 - j))) {
+					unsigned type = window * 256 + i * 8 + j;
+					if (!first)
+						dns_b_putc(&dst, ' ');
+					first = 0;
+					dns_b_puts(&dst, dns_strtype(type));
+				}
+			}
+		}
+		p += len;
+	}
+
+	return dns_b_strllen(&dst);
+} /* dns_typemap_print() */
+
+
+size_t dns_nsec_print(void *_dst, size_t lim, struct dns_nsec *nsec) {
+	struct dns_buf dst = DNS_B_INTO(_dst, lim);
+	char typebuf[4096];
+	size_t typelen;
+
+	dns_b_puts(&dst, nsec->next);
+	dns_b_putc(&dst, ' ');
+
+	typelen = dns_typemap_print(typebuf, sizeof typebuf, nsec->typemap, nsec->typemaplen);
+	dns_b_put(&dst, typebuf, DNS_PP_MIN(typelen, sizeof typebuf - 1));
+
+	return dns_b_strllen(&dst);
+} /* dns_nsec_print() */
+
+
+/*
+ * N S E C 3  R E S O U R C E  R E C O R D
+ */
+
+int dns_nsec3_parse(struct dns_nsec3 *nsec3, struct dns_rr *rr, struct dns_packet *P) {
+	unsigned p = rr->rd.p, pe;
+
+	/* Validate RDATA bounds against packet */
+	if (rr->rd.len > P->end - rr->rd.p)
+		return DNS_EILLEGAL;
+	pe = rr->rd.p + rr->rd.len;
+
+	if (rr->rd.len < 5)
+		return DNS_EILLEGAL;
+
+	nsec3->algorithm = P->data[p++];
+	nsec3->flags = P->data[p++];
+	nsec3->iterations = ((unsigned)P->data[p] << 8) | P->data[p+1];
+	p += 2;
+
+	/* Salt length and salt */
+	nsec3->saltlen = P->data[p++];
+	if (pe - p < nsec3->saltlen)
+		return DNS_EILLEGAL;
+	if (nsec3->saltlen > sizeof nsec3->salt)
+		return DNS_EILLEGAL;
+	memcpy(nsec3->salt, &P->data[p], nsec3->saltlen);
+	p += nsec3->saltlen;
+
+	/* Hash length and next hashed owner name */
+	if (pe - p < 1)
+		return DNS_EILLEGAL;
+	nsec3->nexthashlen = P->data[p++];
+	if (pe - p < nsec3->nexthashlen)
+		return DNS_EILLEGAL;
+	if (nsec3->nexthashlen > sizeof nsec3->nexthash)
+		return DNS_EILLEGAL;
+	memcpy(nsec3->nexthash, &P->data[p], nsec3->nexthashlen);
+	p += nsec3->nexthashlen;
+
+	/* Type bitmap */
+	nsec3->typemaplen = pe - p;
+	if (nsec3->typemaplen > sizeof nsec3->typemap)
+		nsec3->typemaplen = sizeof nsec3->typemap;
+	memcpy(nsec3->typemap, &P->data[p], nsec3->typemaplen);
+
+	return 0;
+} /* dns_nsec3_parse() */
+
+
+int dns_nsec3_push(struct dns_packet *P, struct dns_nsec3 *nsec3) {
+	unsigned p = P->end, pe = P->size;
+	size_t needed = 5 + nsec3->saltlen + 1 + nsec3->nexthashlen + nsec3->typemaplen;
+
+	if (pe - p < needed)
+		return DNS_ENOBUFS;
+
+	P->data[p++] = nsec3->algorithm;
+	P->data[p++] = nsec3->flags;
+	P->data[p++] = (nsec3->iterations >> 8) & 0xff;
+	P->data[p++] = nsec3->iterations & 0xff;
+	P->data[p++] = nsec3->saltlen;
+	memcpy(&P->data[p], nsec3->salt, nsec3->saltlen);
+	p += nsec3->saltlen;
+	P->data[p++] = nsec3->nexthashlen;
+	memcpy(&P->data[p], nsec3->nexthash, nsec3->nexthashlen);
+	p += nsec3->nexthashlen;
+	memcpy(&P->data[p], nsec3->typemap, nsec3->typemaplen);
+	p += nsec3->typemaplen;
+
+	P->end = p;
+
+	return 0;
+} /* dns_nsec3_push() */
+
+
+int dns_nsec3_cmp(const struct dns_nsec3 *a, const struct dns_nsec3 *b) {
+	int cmp;
+
+	if ((cmp = (int)a->algorithm - (int)b->algorithm))
+		return cmp;
+	if ((cmp = (int)a->nexthashlen - (int)b->nexthashlen))
+		return cmp;
+
+	return memcmp(a->nexthash, b->nexthash, a->nexthashlen);
+} /* dns_nsec3_cmp() */
+
+
+_Bool dns_nsec3_hastype(const struct dns_nsec3 *nsec3, enum dns_type type) {
+	unsigned window, offset, byte, bit;
+	const unsigned char *p, *pe;
+
+	p = nsec3->typemap;
+	pe = p + nsec3->typemaplen;
+
+	while (p + 2 <= pe) {
+		window = *p++;
+		offset = *p++;
+		if (p + offset > pe)
+			break;
+
+		if ((unsigned)type >= window * 256 && (unsigned)type < (window + 1) * 256) {
+			unsigned tbit = (unsigned)type - window * 256;
+			byte = tbit / 8;
+			bit = 7 - (tbit % 8);
+			if (byte < offset && (p[byte] & (1 << bit)))
+				return 1;
+		}
+		p += offset;
+	}
+
+	return 0;
+} /* dns_nsec3_hastype() */
+
+
+static size_t dns_base32hex_encode(void *_dst, size_t lim, const unsigned char *src, size_t len) {
+	static const char b32[] = "0123456789ABCDEFGHIJKLMNOPQRSTUV";
+	struct dns_buf dst = DNS_B_INTO(_dst, lim);
+	size_t i;
+	unsigned long acc;
+	int bits;
+
+	acc = 0;
+	bits = 0;
+	for (i = 0; i < len; i++) {
+		acc = (acc << 8) | src[i];
+		bits += 8;
+		while (bits >= 5) {
+			bits -= 5;
+			dns_b_putc(&dst, b32[(acc >> bits) & 0x1f]);
+		}
+	}
+	if (bits > 0) {
+		dns_b_putc(&dst, b32[(acc << (5 - bits)) & 0x1f]);
+	}
+
+	return dns_b_strllen(&dst);
+} /* dns_base32hex_encode() */
+
+
+size_t dns_nsec3_print(void *_dst, size_t lim, struct dns_nsec3 *nsec3) {
+	static const unsigned char hex[16] = "0123456789ABCDEF";
+	struct dns_buf dst = DNS_B_INTO(_dst, lim);
+	char typebuf[4096], hashbuf[256];
+	size_t typelen, hashlen, i;
+
+	dns_b_fmtju(&dst, nsec3->algorithm, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, nsec3->flags, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, nsec3->iterations, 0);
+	dns_b_putc(&dst, ' ');
+
+	/* Salt (hex) or "-" if empty */
+	if (nsec3->saltlen == 0) {
+		dns_b_putc(&dst, '-');
+	} else {
+		for (i = 0; i < nsec3->saltlen; i++) {
+			dns_b_putc(&dst, hex[0x0f & (nsec3->salt[i] >> 4)]);
+			dns_b_putc(&dst, hex[0x0f & (nsec3->salt[i] >> 0)]);
+		}
+	}
+	dns_b_putc(&dst, ' ');
+
+	/* Next hashed owner name (base32hex) */
+	hashlen = dns_base32hex_encode(hashbuf, sizeof hashbuf, nsec3->nexthash, nsec3->nexthashlen);
+	dns_b_put(&dst, hashbuf, DNS_PP_MIN(hashlen, sizeof hashbuf - 1));
+	dns_b_putc(&dst, ' ');
+
+	/* Type bitmap */
+	typelen = dns_typemap_print(typebuf, sizeof typebuf, nsec3->typemap, nsec3->typemaplen);
+	dns_b_put(&dst, typebuf, DNS_PP_MIN(typelen, sizeof typebuf - 1));
+
+	return dns_b_strllen(&dst);
+} /* dns_nsec3_print() */
+
+
+/*
+ * T L S A  R E S O U R C E  R E C O R D
+ */
+
+int dns_tlsa_parse(struct dns_tlsa *tlsa, struct dns_rr *rr, struct dns_packet *P) {
+	unsigned p = rr->rd.p, pe;
+
+	/* Validate RDATA bounds against packet */
+	if (rr->rd.len > P->end - rr->rd.p)
+		return DNS_EILLEGAL;
+	pe = rr->rd.p + rr->rd.len;
+
+	if (rr->rd.len < 3)
+		return DNS_EILLEGAL;
+
+	tlsa->usage = P->data[p++];
+	tlsa->selector = P->data[p++];
+	tlsa->matchtype = P->data[p++];
+
+	tlsa->datalen = pe - p;
+	if (tlsa->datalen > sizeof tlsa->data)
+		tlsa->datalen = sizeof tlsa->data;
+	memcpy(tlsa->data, &P->data[p], tlsa->datalen);
+
+	return 0;
+} /* dns_tlsa_parse() */
+
+
+int dns_tlsa_push(struct dns_packet *P, struct dns_tlsa *tlsa) {
+	unsigned p = P->end, pe = P->size;
+
+	if (pe - p < 3 + tlsa->datalen)
+		return DNS_ENOBUFS;
+
+	P->data[p++] = tlsa->usage;
+	P->data[p++] = tlsa->selector;
+	P->data[p++] = tlsa->matchtype;
+	memcpy(&P->data[p], tlsa->data, tlsa->datalen);
+	p += tlsa->datalen;
+
+	P->end = p;
+
+	return 0;
+} /* dns_tlsa_push() */
+
+
+int dns_tlsa_cmp(const struct dns_tlsa *a, const struct dns_tlsa *b) {
+	int cmp;
+
+	if ((cmp = (int)a->usage - (int)b->usage))
+		return cmp;
+	if ((cmp = (int)a->selector - (int)b->selector))
+		return cmp;
+	if ((cmp = (int)a->matchtype - (int)b->matchtype))
+		return cmp;
+	if ((cmp = (int)a->datalen - (int)b->datalen))
+		return cmp;
+
+	return memcmp(a->data, b->data, a->datalen);
+} /* dns_tlsa_cmp() */
+
+
+size_t dns_tlsa_print(void *_dst, size_t lim, struct dns_tlsa *tlsa) {
+	static const unsigned char hex[16] = "0123456789ABCDEF";
+	struct dns_buf dst = DNS_B_INTO(_dst, lim);
+	size_t i;
+
+	dns_b_fmtju(&dst, tlsa->usage, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, tlsa->selector, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, tlsa->matchtype, 0);
+	dns_b_putc(&dst, ' ');
+
+	for (i = 0; i < tlsa->datalen; i++) {
+		dns_b_putc(&dst, hex[0x0f & (tlsa->data[i] >> 4)]);
+		dns_b_putc(&dst, hex[0x0f & (tlsa->data[i] >> 0)]);
+	}
+
+	return dns_b_strllen(&dst);
+} /* dns_tlsa_print() */
+
+
+/*
+ * C A A  R E S O U R C E  R E C O R D
+ */
+
+int dns_caa_parse(struct dns_caa *caa, struct dns_rr *rr, struct dns_packet *P) {
+	unsigned p = rr->rd.p, pe;
+	size_t taglen;
+
+	/* Validate RDATA bounds against packet */
+	if (rr->rd.len > P->end - rr->rd.p)
+		return DNS_EILLEGAL;
+	pe = rr->rd.p + rr->rd.len;
+
+	if (rr->rd.len < 2)
+		return DNS_EILLEGAL;
+
+	caa->flags = P->data[p++];
+	taglen = P->data[p++];
+
+	if (pe - p < taglen)
+		return DNS_EILLEGAL;
+
+	if (taglen > sizeof caa->tag - 1)
+		taglen = sizeof caa->tag - 1;
+	memcpy(caa->tag, &P->data[p], taglen);
+	caa->tag[taglen] = '\0';
+	p += taglen;
+
+	caa->valuelen = pe - p;
+	if (caa->valuelen > sizeof caa->value - 1)
+		caa->valuelen = sizeof caa->value - 1;
+	memcpy(caa->value, &P->data[p], caa->valuelen);
+	caa->value[caa->valuelen] = '\0';
+
+	return 0;
+} /* dns_caa_parse() */
+
+
+int dns_caa_push(struct dns_packet *P, struct dns_caa *caa) {
+	unsigned p = P->end, pe = P->size;
+	size_t taglen = strlen(caa->tag);
+
+	if (pe - p < 2 + taglen + caa->valuelen)
+		return DNS_ENOBUFS;
+
+	P->data[p++] = caa->flags;
+	P->data[p++] = taglen;
+	memcpy(&P->data[p], caa->tag, taglen);
+	p += taglen;
+	memcpy(&P->data[p], caa->value, caa->valuelen);
+	p += caa->valuelen;
+
+	P->end = p;
+
+	return 0;
+} /* dns_caa_push() */
+
+
+int dns_caa_cmp(const struct dns_caa *a, const struct dns_caa *b) {
+	int cmp;
+
+	if ((cmp = (int)a->flags - (int)b->flags))
+		return cmp;
+	if ((cmp = strcasecmp(a->tag, b->tag)))
+		return cmp;
+	if ((cmp = (int)a->valuelen - (int)b->valuelen))
+		return cmp;
+
+	return memcmp(a->value, b->value, a->valuelen);
+} /* dns_caa_cmp() */
+
+
+size_t dns_caa_print(void *_dst, size_t lim, struct dns_caa *caa) {
+	struct dns_buf dst = DNS_B_INTO(_dst, lim);
+
+	dns_b_fmtju(&dst, caa->flags, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_puts(&dst, caa->tag);
+	dns_b_putc(&dst, ' ');
+	dns_b_putc(&dst, '"');
+	dns_b_put(&dst, caa->value, caa->valuelen);
+	dns_b_putc(&dst, '"');
+
+	return dns_b_strllen(&dst);
+} /* dns_caa_print() */
+
+
+/*
+ * U R I  R E S O U R C E  R E C O R D
+ */
+
+int dns_uri_parse(struct dns_uri *uri, struct dns_rr *rr, struct dns_packet *P) {
+	unsigned p = rr->rd.p, pe;
+	size_t targetlen;
+
+	/* Validate RDATA bounds against packet */
+	if (rr->rd.len > P->end - rr->rd.p)
+		return DNS_EILLEGAL;
+	pe = rr->rd.p + rr->rd.len;
+
+	if (rr->rd.len < 4)
+		return DNS_EILLEGAL;
+
+	uri->priority = ((unsigned)P->data[p] << 8) | P->data[p+1];
+	p += 2;
+	uri->weight = ((unsigned)P->data[p] << 8) | P->data[p+1];
+	p += 2;
+
+	targetlen = pe - p;
+	if (targetlen > sizeof uri->target - 1)
+		targetlen = sizeof uri->target - 1;
+	memcpy(uri->target, &P->data[p], targetlen);
+	uri->target[targetlen] = '\0';
+
+	return 0;
+} /* dns_uri_parse() */
+
+
+int dns_uri_push(struct dns_packet *P, struct dns_uri *uri) {
+	unsigned p = P->end, pe = P->size;
+	size_t targetlen = strlen(uri->target);
+
+	if (pe - p < 4 + targetlen)
+		return DNS_ENOBUFS;
+
+	P->data[p++] = (uri->priority >> 8) & 0xff;
+	P->data[p++] = uri->priority & 0xff;
+	P->data[p++] = (uri->weight >> 8) & 0xff;
+	P->data[p++] = uri->weight & 0xff;
+	memcpy(&P->data[p], uri->target, targetlen);
+	p += targetlen;
+
+	P->end = p;
+
+	return 0;
+} /* dns_uri_push() */
+
+
+int dns_uri_cmp(const struct dns_uri *a, const struct dns_uri *b) {
+	int cmp;
+
+	if ((cmp = (int)a->priority - (int)b->priority))
+		return cmp;
+	if ((cmp = (int)a->weight - (int)b->weight))
+		return cmp;
+
+	return strcmp(a->target, b->target);
+} /* dns_uri_cmp() */
+
+
+size_t dns_uri_print(void *_dst, size_t lim, struct dns_uri *uri) {
+	struct dns_buf dst = DNS_B_INTO(_dst, lim);
+
+	dns_b_fmtju(&dst, uri->priority, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_fmtju(&dst, uri->weight, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_putc(&dst, '"');
+	dns_b_puts(&dst, uri->target);
+	dns_b_putc(&dst, '"');
+
+	return dns_b_strllen(&dst);
+} /* dns_uri_print() */
+
+
+/*
+ * S V C B / H T T P S  R E S O U R C E  R E C O R D
+ */
+
+int dns_svcb_parse(struct dns_svcb *svcb, struct dns_rr *rr, struct dns_packet *P) {
+	unsigned p = rr->rd.p, pe;
+	int error;
+
+	/* Validate RDATA bounds against packet */
+	if (rr->rd.len > P->end - rr->rd.p)
+		return DNS_EILLEGAL;
+	pe = rr->rd.p + rr->rd.len;
+
+	if (rr->rd.len < 2)
+		return DNS_EILLEGAL;
+
+	svcb->priority = ((unsigned)P->data[p] << 8) | P->data[p+1];
+	p += 2;
+
+	/* Parse target name */
+	if (!dns_d_expand(svcb->target, sizeof svcb->target, p, P, &error))
+		return error;
+	p = dns_d_skip(p, P);
+
+	/* Validate p is within RDATA bounds (check for underflow from skip too) */
+	if (p < rr->rd.p || p > pe)
+		return DNS_EILLEGAL;
+
+	/* Copy SvcParams */
+	svcb->paramslen = pe - p;
+	if (svcb->paramslen > sizeof svcb->params)
+		svcb->paramslen = sizeof svcb->params;
+	memcpy(svcb->params, &P->data[p], svcb->paramslen);
+
+	return 0;
+} /* dns_svcb_parse() */
+
+
+int dns_svcb_push(struct dns_packet *P, struct dns_svcb *svcb) {
+	unsigned p = P->end, pe = P->size;
+	int error;
+
+	if (pe - p < 2)
+		return DNS_ENOBUFS;
+
+	P->data[p++] = (svcb->priority >> 8) & 0xff;
+	P->data[p++] = svcb->priority & 0xff;
+
+	P->end = p;
+
+	/* Push target name */
+	if ((error = dns_d_push(P, svcb->target, strlen(svcb->target))))
+		return error;
+	p = P->end;
+
+	/* Push SvcParams */
+	if (pe - p < svcb->paramslen)
+		return DNS_ENOBUFS;
+	memcpy(&P->data[p], svcb->params, svcb->paramslen);
+	P->end = p + svcb->paramslen;
+
+	return 0;
+} /* dns_svcb_push() */
+
+
+int dns_svcb_cmp(const struct dns_svcb *a, const struct dns_svcb *b) {
+	int cmp;
+
+	if ((cmp = (int)a->priority - (int)b->priority))
+		return cmp;
+
+	return strcasecmp(a->target, b->target);
+} /* dns_svcb_cmp() */
+
+
+_Bool dns_svcb_getparam(const struct dns_svcb *svcb, enum dns_svcb_key key, const unsigned char **data, size_t *len) {
+	const unsigned char *p = svcb->params, *pe = p + svcb->paramslen;
+
+	while (p + 4 <= pe) {
+		unsigned pkey = ((unsigned)p[0] << 8) | p[1];
+		unsigned plen = ((unsigned)p[2] << 8) | p[3];
+		p += 4;
+
+		if (p + plen > pe)
+			break;
+
+		if (pkey == (unsigned)key) {
+			*data = p;
+			*len = plen;
+			return 1;
+		}
+		p += plen;
+	}
+
+	return 0;
+} /* dns_svcb_getparam() */
+
+
+static const char *dns_svcb_keyname(unsigned key) {
+	switch (key) {
+	case DNS_SVCB_KEY_MANDATORY: return "mandatory";
+	case DNS_SVCB_KEY_ALPN: return "alpn";
+	case DNS_SVCB_KEY_NO_DEFAULT_ALPN: return "no-default-alpn";
+	case DNS_SVCB_KEY_PORT: return "port";
+	case DNS_SVCB_KEY_IPV4HINT: return "ipv4hint";
+	case DNS_SVCB_KEY_ECH: return "ech";
+	case DNS_SVCB_KEY_IPV6HINT: return "ipv6hint";
+	case DNS_SVCB_KEY_DOHPATH: return "dohpath";
+	case DNS_SVCB_KEY_OHTTP: return "ohttp";
+	default: return NULL;
+	}
+} /* dns_svcb_keyname() */
+
+
+size_t dns_svcb_print(void *_dst, size_t lim, struct dns_svcb *svcb) {
+	struct dns_buf dst = DNS_B_INTO(_dst, lim);
+	const unsigned char *p, *pe;
+	char addrbuf[INET6_ADDRSTRLEN];
+
+	dns_b_fmtju(&dst, svcb->priority, 0);
+	dns_b_putc(&dst, ' ');
+	dns_b_puts(&dst, svcb->target[0] ? svcb->target : ".");
+
+	/* Parse and print SvcParams */
+	p = svcb->params;
+	pe = p + svcb->paramslen;
+
+	while (p + 4 <= pe) {
+		unsigned key = ((unsigned)p[0] << 8) | p[1];
+		unsigned len = ((unsigned)p[2] << 8) | p[3];
+		const char *keyname;
+		p += 4;
+
+		/* Validate len doesn't overflow or exceed remaining buffer */
+		if (len > (size_t)(pe - p))
+			break;
+
+		dns_b_putc(&dst, ' ');
+
+		keyname = dns_svcb_keyname(key);
+		if (keyname) {
+			dns_b_puts(&dst, keyname);
+		} else {
+			dns_b_puts(&dst, "key");
+			dns_b_fmtju(&dst, key, 0);
+		}
+
+		if (len > 0) {
+			dns_b_putc(&dst, '=');
+
+			switch (key) {
+			case DNS_SVCB_KEY_MANDATORY: {
+				const unsigned char *mp = p;
+				int first = 1;
+				while (mp + 2 <= p + len) {
+					unsigned mkey = ((unsigned)mp[0] << 8) | mp[1];
+					const char *mkeyname = dns_svcb_keyname(mkey);
+					if (!first) dns_b_putc(&dst, ',');
+					first = 0;
+					if (mkeyname) {
+						dns_b_puts(&dst, mkeyname);
+					} else {
+						dns_b_puts(&dst, "key");
+						dns_b_fmtju(&dst, mkey, 0);
+					}
+					mp += 2;
+				}
+				break;
+			}
+			case DNS_SVCB_KEY_PORT:
+				if (len >= 2) {
+					unsigned port = ((unsigned)p[0] << 8) | p[1];
+					dns_b_fmtju(&dst, port, 0);
+				}
+				break;
+			case DNS_SVCB_KEY_ALPN: {
+				const unsigned char *ap = p, *ape = p + len;
+				int first = 1;
+				dns_b_putc(&dst, '"');
+				while (ap < ape) {
+					unsigned alen = *ap++;
+					if (ap + alen > ape) break;
+					if (!first) dns_b_putc(&dst, ',');
+					first = 0;
+					dns_b_put(&dst, ap, alen);
+					ap += alen;
+				}
+				dns_b_putc(&dst, '"');
+				break;
+			}
+			case DNS_SVCB_KEY_IPV4HINT: {
+				const unsigned char *ap = p;
+				int first = 1;
+				while (ap + 4 <= p + len) {
+					if (!first) dns_b_putc(&dst, ',');
+					first = 0;
+					if (dns_inet_ntop(AF_INET, ap, addrbuf, sizeof addrbuf))
+						dns_b_puts(&dst, addrbuf);
+					ap += 4;
+				}
+				break;
+			}
+			case DNS_SVCB_KEY_IPV6HINT: {
+				const unsigned char *ap = p;
+				int first = 1;
+				while (ap + 16 <= p + len) {
+					if (!first) dns_b_putc(&dst, ',');
+					first = 0;
+					if (dns_inet_ntop(AF_INET6, ap, addrbuf, sizeof addrbuf))
+						dns_b_puts(&dst, addrbuf);
+					ap += 16;
+				}
+				break;
+			}
+			case DNS_SVCB_KEY_DOHPATH:
+				dns_b_putc(&dst, '"');
+				dns_b_put(&dst, p, len);
+				dns_b_putc(&dst, '"');
+				break;
+			case DNS_SVCB_KEY_ECH:
+			default: {
+				/* Base64 encoding for binary params (like ech) */
+				char b64buf[2048];
+				size_t b64len = dns_base64_encode(b64buf, sizeof(b64buf), p, len);
+				(void)b64len;
+				dns_b_puts(&dst, b64buf);
+				break;
+			}
+			}
+		}
+		p += len;
+	}
+
+	return dns_b_strllen(&dst);
+} /* dns_svcb_print() */
+
+
 struct dns_txt *dns_txt_init(struct dns_txt *txt, size_t size) {
 	assert(size > offsetof(struct dns_txt, data));
 
@@ -4011,6 +5140,16 @@ static const struct dns_rrtype {
 	{ DNS_T_TXT,    "TXT",    &dns_txt_initany,  &dns_txt_parse,    &dns_txt_push,    &dns_txt_cmp,    &dns_txt_print,    0,                },
 	{ DNS_T_SPF,    "SPF",    &dns_txt_initany,  &dns_txt_parse,    &dns_txt_push,    &dns_txt_cmp,    &dns_txt_print,    0,                },
 	{ DNS_T_SSHFP,  "SSHFP",  0,                 &dns_sshfp_parse,  &dns_sshfp_push,  &dns_sshfp_cmp,  &dns_sshfp_print,  0,                },
+	{ DNS_T_DS,     "DS",     0,                 &dns_ds_parse,     &dns_ds_push,     &dns_ds_cmp,     &dns_ds_print,     0,                },
+	{ DNS_T_DNSKEY, "DNSKEY", 0,                 &dns_dnskey_parse, &dns_dnskey_push, &dns_dnskey_cmp, &dns_dnskey_print, 0,                },
+	{ DNS_T_RRSIG,  "RRSIG",  0,                 &dns_rrsig_parse,  &dns_rrsig_push,  &dns_rrsig_cmp,  &dns_rrsig_print,  0,                },
+	{ DNS_T_NSEC,   "NSEC",   0,                 &dns_nsec_parse,   &dns_nsec_push,   &dns_nsec_cmp,   &dns_nsec_print,   0,                },
+	{ DNS_T_NSEC3,  "NSEC3",  0,                 &dns_nsec3_parse,  &dns_nsec3_push,  &dns_nsec3_cmp,  &dns_nsec3_print,  0,                },
+	{ DNS_T_TLSA,   "TLSA",   0,                 &dns_tlsa_parse,   &dns_tlsa_push,   &dns_tlsa_cmp,   &dns_tlsa_print,   0,                },
+	{ DNS_T_SVCB,   "SVCB",   0,                 &dns_svcb_parse,   &dns_svcb_push,   &dns_svcb_cmp,   &dns_svcb_print,   0,                },
+	{ DNS_T_HTTPS,  "HTTPS",  0,                 &dns_svcb_parse,   &dns_svcb_push,   &dns_svcb_cmp,   &dns_svcb_print,   0,                },
+	{ DNS_T_CAA,    "CAA",    0,                 &dns_caa_parse,    &dns_caa_push,    &dns_caa_cmp,    &dns_caa_print,    0,                },
+	{ DNS_T_URI,    "URI",    0,                 &dns_uri_parse,    &dns_uri_push,    &dns_uri_cmp,    &dns_uri_print,    0,                },
 	{ DNS_T_AXFR,   "AXFR",   0,                 0,                 0,                0,               0,                 0,                },
 }; /* dns_rrtypes[] */
 
