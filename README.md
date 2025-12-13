@@ -1,3 +1,63 @@
+## About this fork
+
+My agenda in making this fork of [wahern/dns](https://github.com/wahern/dns)
+is:
+
+ - have an async DNS stub resolver for use in
+   [Heimdal](https://github.com/heimdal/heimdal) for the purposes of:
+    - timing out DNS queries
+    - making it possible to use DNS on ports other than 53 for the
+      purpose of testing with minimal VM/containerization considerations
+    - making it possible to develop async APIs for Kerberos (basically a
+      GSS-API extension)
+
+I might want to use this in other projects as well, but use in Heimdal
+is what interests me at this moment.
+
+> NOTE WELL: As of this writing almost all of the _code_ changes (I
+> _never_ use LLMs for writing _prose_) in this fork is LLM-coded (with
+> Claude code) with heavy human guidance but little human review.
+> Therefore use with great care or not at all!
+
+This fork of does the following as of this writing:
+
+ - fixes a couple of DoS issues
+ - fixes a memory leak
+ - adds a fuzzer
+ - no longer uses `func()` for functions that are polymorphic on the
+   types of their arguments
+ - adds support for the `AD` and `CD` bits
+ - adds support for the `EDNS0` `DO` bit (`DNS_OPT_DNSSEC`)
+ - adds support for parsing RDATA of the DNSSEC RRtypes
+ - adds support for parsing RDATA of `CAA`, `TLSA`, `URI`, `SVCB`, and
+   `HTTPS` RRtypes
+ - adds support for using `getentropy()` and `getrandom()`
+    - support for reading `/dev/urandom` is not included, but should be
+      trivial to add for older platforms
+ - rounds out support for Windows using MSVC w/ Clang (for C99 features
+   that MSVC lacks support for), including:
+    - use of `RtlGenRandom()`
+    - use of `GetAdaptersAddresses()` to get what would have been the
+      `/etc/resolv.conf` resolver configuration on any Unix or
+      Unix-alike, and this includes IPv4 and IPv6 support
+    - use of `C:\Windows\System32\drivers\etc\hosts` instead of
+      /etc/hosts
+    - do not attempt to use `/etc/nsswitch.conf`
+    - currently the `dns` demo command does not build on Windows due to
+      lack of `<getopt.h>`, but Heimdal has a multi-platform
+      command-line argument parser that I can use when I import this
+      into Heimdal
+ - fixes warnings
+ - enables more warnings
+ - fixes misc buglets
+ - adds GitHub Actions workflows
+
+Note though that there is no autoconf or similar provided.  Some build
+configuration is required in order to select the best RNG.
+
+The rest of this README is unmodified from the original and is not my
+writing but @wahern's.
+
 ## Home Page
 
 This project's home page and main repository is located at
