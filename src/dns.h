@@ -1491,6 +1491,51 @@ DNS_PUBLIC const struct dns_stat *dns_ai_stat(struct dns_addrinfo *);
 
 
 /*
+ * S Y N C H R O N O U S  I N T E R F A C E S
+ *
+ * Blocking wrappers similar to getaddrinfo(3) and getnameinfo(3).
+ *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+/*
+ * dns_getaddrinfo - synchronous address resolution (like getaddrinfo)
+ *
+ * Arguments:
+ *   host    - hostname to resolve (required)
+ *   serv    - service name or port number (optional, may be NULL)
+ *   hints   - addrinfo hints (optional, may be NULL)
+ *   res     - output pointer for result list (required)
+ *   timeout - timeout in seconds (0 = no timeout, use internal default)
+ *
+ * Returns 0 on success or an EAI_* error code on failure.
+ * Caller must free *res with dns_freeaddrinfo().
+ */
+DNS_PUBLIC int dns_getaddrinfo(const char *host, const char *serv, const struct addrinfo *hints, struct addrinfo **res, int timeout);
+
+/*
+ * dns_freeaddrinfo - free addrinfo list from dns_getaddrinfo
+ */
+DNS_PUBLIC void dns_freeaddrinfo(struct addrinfo *res);
+
+/*
+ * dns_getnameinfo - synchronous reverse lookup (like getnameinfo)
+ *
+ * Arguments:
+ *   sa      - socket address to look up (required)
+ *   salen   - length of socket address
+ *   host    - buffer for hostname result (may be NULL)
+ *   hostlen - size of host buffer
+ *   serv    - buffer for service result (may be NULL)
+ *   servlen - size of serv buffer
+ *   flags   - NI_* flags (same as getnameinfo)
+ *   timeout - timeout in seconds (0 = no timeout, use internal default)
+ *
+ * Returns 0 on success or an EAI_* error code on failure.
+ */
+DNS_PUBLIC int dns_getnameinfo(const struct sockaddr *sa, socklen_t salen, char *host, size_t hostlen, char *serv, size_t servlen, int flags, int timeout);
+
+
+/*
  * U T I L I T Y  I N T E R F A C E S
  *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
