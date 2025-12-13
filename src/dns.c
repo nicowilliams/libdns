@@ -51,10 +51,14 @@
 #include <stdlib.h>		/* malloc(3) realloc(3) free(3) rand(3) random(3) arc4random(3) */
 #include <stdio.h>		/* FILE fopen(3) fclose(3) getc(3) rewind(3) */
 #include <string.h>		/* memcpy(3) strlen(3) memmove(3) memchr(3) memcmp(3) strchr(3) strsep(3) strcspn(3) */
+#ifndef _WIN32
 #include <strings.h>		/* strcasecmp(3) strncasecmp(3) */
+#endif
 #include <ctype.h>		/* isspace(3) isdigit(3) */
 #include <time.h>		/* time_t time(2) difftime(3) */
+#ifndef _WIN32
 #include <signal.h>		/* SIGPIPE sigemptyset(3) sigaddset(3) sigpending(2) sigprocmask(2) pthread_sigmask(3) sigtimedwait(2) */
+#endif
 #include <errno.h>		/* errno EINVAL ENOENT */
 #undef NDEBUG
 #include <assert.h>		/* assert(3) */
@@ -65,6 +69,8 @@
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h>		/* GetNetworkParams FIXED_INFO */
+#pragma comment(lib, "IPHLPAPI.lib")
 #else
 #include <sys/types.h>		/* FD_SETSIZE socklen_t */
 #include <sys/select.h>		/* FD_ZERO FD_SET fd_set select(2) */
@@ -5667,6 +5673,88 @@ struct dns_resolv_conf *dns_resconf_mortal(struct dns_resolv_conf *resconf) {
 } /* dns_resconf_mortal() */
 
 
+#if _WIN32
+/*
+ * Load DNS configuration from Windows using GetAdaptersAddresses.
+ * This retrieves DNS servers (IPv4 and IPv6) from all adapters,
+ * prioritized by adapter metric (lowest metric = highest priority).
+ */
+static int dns_resconf_loadwin(struct dns_resolv_conf *resconf) {
+	IP_ADAPTER_ADDRESSES *adapters = NULL, *adapter;
+	IP_ADAPTER_DNS_SERVER_ADDRESS *dns;
+	ULONG size = 15000; /* recommended initial size */
+	ULONG ret;
+	size_t count = 0;
+
+	/* Allocate and call GetAdaptersAddresses */
+	for (int tries = 0; tries < 3; tries++) {
+		adapters = malloc(size);
+		if (!adapters)
+			return ENOMEM;
+
+		ret = GetAdaptersAddresses(AF_UNSPEC,
+			GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_FRIENDLY_NAME,
+			NULL, adapters, &size);
+
+		if (ret == ERROR_SUCCESS)
+			break;
+
+		free(adapters);
+		adapters = NULL;
+
+		if (ret != ERROR_BUFFER_OVERFLOW)
+			return (ret == ERROR_NO_DATA) ? ENOENT : EINVAL;
+	}
+
+	if (!adapters)
+		return ENOMEM;
+
+	/*
+	 * Iterate adapters. Windows typically returns them in metric order,
+	 * so we just take DNS servers from each operational adapter until full.
+	 */
+	for (adapter = adapters; adapter && count < lengthof(resconf->nameserver); adapter = adapter->Next) {
+		/* Skip non-operational adapters */
+		if (adapter->OperStatus != IfOperStatusUp)
+			continue;
+
+		/* Load DNS suffix from first adapter that has one */
+		if (resconf->search[0][0] == '\0' && adapter->DnsSuffix && adapter->DnsSuffix[0] != L'\0') {
+			char suffix[DNS_D_MAXNAME];
+			int len = WideCharToMultiByte(CP_UTF8, 0, adapter->DnsSuffix, -1,
+			                               suffix, sizeof suffix, NULL, NULL);
+			if (len > 0) {
+				dns_d_anchor(resconf->search[0], sizeof resconf->search[0],
+				             suffix, strlen(suffix));
+			}
+		}
+
+		/* Add DNS servers from this adapter */
+		for (dns = adapter->FirstDnsServerAddress; dns && count < lengthof(resconf->nameserver); dns = dns->Next) {
+			struct sockaddr *sa = dns->Address.lpSockaddr;
+
+			if (sa->sa_family == AF_INET) {
+				memcpy(&resconf->nameserver[count], sa, sizeof(struct sockaddr_in));
+				((struct sockaddr_in *)&resconf->nameserver[count])->sin_port = htons(53);
+				count++;
+			} else if (sa->sa_family == AF_INET6) {
+				struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)sa;
+				/* Skip link-local addresses without proper scope */
+				if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr) && sin6->sin6_scope_id == 0)
+					continue;
+				memcpy(&resconf->nameserver[count], sa, sizeof(struct sockaddr_in6));
+				((struct sockaddr_in6 *)&resconf->nameserver[count])->sin6_port = htons(53);
+				count++;
+			}
+		}
+	}
+
+	free(adapters);
+	return 0;
+} /* dns_resconf_loadwin() */
+#endif
+
+
 struct dns_resolv_conf *dns_resconf_local(int *error_) {
 	struct dns_resolv_conf *resconf;
 	int error;
@@ -5674,6 +5762,16 @@ struct dns_resolv_conf *dns_resconf_local(int *error_) {
 	if (!(resconf = dns_resconf_open(&error)))
 		goto error;
 
+#if _WIN32
+	if ((error = dns_resconf_loadwin(resconf))) {
+		/*
+		 * If GetAdaptersAddresses fails, fall back to the default
+		 * nameserver (127.0.0.1) set by dns_resconf_open.
+		 */
+		if (error != ENOENT)
+			goto error;
+	}
+#else
 	if ((error = dns_resconf_loadpath(resconf, "/etc/resolv.conf"))) {
 		/*
 		 * NOTE: Both the glibc and BIND9 resolvers ignore a missing
@@ -5690,6 +5788,7 @@ struct dns_resolv_conf *dns_resconf_local(int *error_) {
 		if (error != ENOENT)
 			goto error;
 	}
+#endif
 
 	return resconf;
 error:
