@@ -5129,39 +5129,48 @@ size_t dns_txt_print(void *_dst, size_t lim, struct dns_txt *txt) {
 } /* dns_txt_print() */
 
 
+typedef int (*dns_rr_parse_f)(void *, struct dns_rr *, struct dns_packet *);
+typedef int (*dns_rr_push_f)(struct dns_packet *, void *);
+typedef int (*dns_rr_cmp_f)(const void *, const void *);
+typedef size_t (*dns_rr_print_f)(void *, size_t, void *);
+typedef size_t (*dns_rr_cname_f)(void *, size_t, void *);
+
 static const struct dns_rrtype {
 	enum dns_type type;
 	const char *name;
 	union dns_any *(*init)(union dns_any *, size_t);
-	int (*parse)();
-	int (*push)();
-	int (*cmp)();
-	size_t (*print)();
-	size_t (*cname)();
+	dns_rr_parse_f parse;
+	dns_rr_push_f push;
+	dns_rr_cmp_f cmp;
+	dns_rr_print_f print;
+	dns_rr_cname_f cname;
 } dns_rrtypes[]	= {
-	{ DNS_T_A,      "A",      0,                 &dns_a_parse,      &dns_a_push,      &dns_a_cmp,      &dns_a_print,      0,                },
-	{ DNS_T_AAAA,   "AAAA",   0,                 &dns_aaaa_parse,   &dns_aaaa_push,   &dns_aaaa_cmp,   &dns_aaaa_print,   0,                },
-	{ DNS_T_MX,     "MX",     0,                 &dns_mx_parse,     &dns_mx_push,     &dns_mx_cmp,     &dns_mx_print,     &dns_mx_cname,    },
-	{ DNS_T_NS,     "NS",     0,                 &dns_ns_parse,     &dns_ns_push,     &dns_ns_cmp,     &dns_ns_print,     &dns_ns_cname,    },
-	{ DNS_T_CNAME,  "CNAME",  0,                 &dns_cname_parse,  &dns_cname_push,  &dns_cname_cmp,  &dns_cname_print,  &dns_cname_cname, },
-	{ DNS_T_SOA,    "SOA",    0,                 &dns_soa_parse,    &dns_soa_push,    &dns_soa_cmp,    &dns_soa_print,    0,                },
-	{ DNS_T_SRV,    "SRV",    0,                 &dns_srv_parse,    &dns_srv_push,    &dns_srv_cmp,    &dns_srv_print,    &dns_srv_cname,   },
-	{ DNS_T_OPT,    "OPT",    &dns_opt_initany,  &dns_opt_parse,    &dns_opt_push,    &dns_opt_cmp,    &dns_opt_print,    0,                },
-	{ DNS_T_PTR,    "PTR",    0,                 &dns_ptr_parse,    &dns_ptr_push,    &dns_ptr_cmp,    &dns_ptr_print,    &dns_ptr_cname,   },
-	{ DNS_T_TXT,    "TXT",    &dns_txt_initany,  &dns_txt_parse,    &dns_txt_push,    &dns_txt_cmp,    &dns_txt_print,    0,                },
-	{ DNS_T_SPF,    "SPF",    &dns_txt_initany,  &dns_txt_parse,    &dns_txt_push,    &dns_txt_cmp,    &dns_txt_print,    0,                },
-	{ DNS_T_SSHFP,  "SSHFP",  0,                 &dns_sshfp_parse,  &dns_sshfp_push,  &dns_sshfp_cmp,  &dns_sshfp_print,  0,                },
-	{ DNS_T_DS,     "DS",     0,                 &dns_ds_parse,     &dns_ds_push,     &dns_ds_cmp,     &dns_ds_print,     0,                },
-	{ DNS_T_DNSKEY, "DNSKEY", 0,                 &dns_dnskey_parse, &dns_dnskey_push, &dns_dnskey_cmp, &dns_dnskey_print, 0,                },
-	{ DNS_T_RRSIG,  "RRSIG",  0,                 &dns_rrsig_parse,  &dns_rrsig_push,  &dns_rrsig_cmp,  &dns_rrsig_print,  0,                },
-	{ DNS_T_NSEC,   "NSEC",   0,                 &dns_nsec_parse,   &dns_nsec_push,   &dns_nsec_cmp,   &dns_nsec_print,   0,                },
-	{ DNS_T_NSEC3,  "NSEC3",  0,                 &dns_nsec3_parse,  &dns_nsec3_push,  &dns_nsec3_cmp,  &dns_nsec3_print,  0,                },
-	{ DNS_T_TLSA,   "TLSA",   0,                 &dns_tlsa_parse,   &dns_tlsa_push,   &dns_tlsa_cmp,   &dns_tlsa_print,   0,                },
-	{ DNS_T_SVCB,   "SVCB",   0,                 &dns_svcb_parse,   &dns_svcb_push,   &dns_svcb_cmp,   &dns_svcb_print,   0,                },
-	{ DNS_T_HTTPS,  "HTTPS",  0,                 &dns_svcb_parse,   &dns_svcb_push,   &dns_svcb_cmp,   &dns_svcb_print,   0,                },
-	{ DNS_T_CAA,    "CAA",    0,                 &dns_caa_parse,    &dns_caa_push,    &dns_caa_cmp,    &dns_caa_print,    0,                },
-	{ DNS_T_URI,    "URI",    0,                 &dns_uri_parse,    &dns_uri_push,    &dns_uri_cmp,    &dns_uri_print,    0,                },
-	{ DNS_T_AXFR,   "AXFR",   0,                 0,                 0,                0,               0,                 0,                },
+#define DNS_RR_ENTRY(T, N, I, Pa, Pu, C, Pr, Cn) \
+	{ T, N, I, (dns_rr_parse_f)(Pa), (dns_rr_push_f)(Pu), (dns_rr_cmp_f)(C), (dns_rr_print_f)(Pr), (dns_rr_cname_f)(Cn) }
+	DNS_RR_ENTRY(DNS_T_A,      "A",      0,                 &dns_a_parse,      &dns_a_push,      &dns_a_cmp,      &dns_a_print,      0),
+	DNS_RR_ENTRY(DNS_T_AAAA,   "AAAA",   0,                 &dns_aaaa_parse,   &dns_aaaa_push,   &dns_aaaa_cmp,   &dns_aaaa_print,   0),
+	DNS_RR_ENTRY(DNS_T_MX,     "MX",     0,                 &dns_mx_parse,     &dns_mx_push,     &dns_mx_cmp,     &dns_mx_print,     &dns_mx_cname),
+	DNS_RR_ENTRY(DNS_T_NS,     "NS",     0,                 &dns_ns_parse,     &dns_ns_push,     &dns_ns_cmp,     &dns_ns_print,     &dns_ns_cname),
+	DNS_RR_ENTRY(DNS_T_CNAME,  "CNAME",  0,                 &dns_cname_parse,  &dns_cname_push,  &dns_cname_cmp,  &dns_cname_print,  &dns_cname_cname),
+	DNS_RR_ENTRY(DNS_T_SOA,    "SOA",    0,                 &dns_soa_parse,    &dns_soa_push,    &dns_soa_cmp,    &dns_soa_print,    0),
+	DNS_RR_ENTRY(DNS_T_SRV,    "SRV",    0,                 &dns_srv_parse,    &dns_srv_push,    &dns_srv_cmp,    &dns_srv_print,    &dns_srv_cname),
+	DNS_RR_ENTRY(DNS_T_OPT,    "OPT",    &dns_opt_initany,  &dns_opt_parse,    &dns_opt_push,    &dns_opt_cmp,    &dns_opt_print,    0),
+	DNS_RR_ENTRY(DNS_T_PTR,    "PTR",    0,                 &dns_ptr_parse,    &dns_ptr_push,    &dns_ptr_cmp,    &dns_ptr_print,    &dns_ptr_cname),
+	DNS_RR_ENTRY(DNS_T_TXT,    "TXT",    &dns_txt_initany,  &dns_txt_parse,    &dns_txt_push,    &dns_txt_cmp,    &dns_txt_print,    0),
+	DNS_RR_ENTRY(DNS_T_SPF,    "SPF",    &dns_txt_initany,  &dns_txt_parse,    &dns_txt_push,    &dns_txt_cmp,    &dns_txt_print,    0),
+	DNS_RR_ENTRY(DNS_T_SSHFP,  "SSHFP",  0,                 &dns_sshfp_parse,  &dns_sshfp_push,  &dns_sshfp_cmp,  &dns_sshfp_print,  0),
+	DNS_RR_ENTRY(DNS_T_DS,     "DS",     0,                 &dns_ds_parse,     &dns_ds_push,     &dns_ds_cmp,     &dns_ds_print,     0),
+	DNS_RR_ENTRY(DNS_T_DNSKEY, "DNSKEY", 0,                 &dns_dnskey_parse, &dns_dnskey_push, &dns_dnskey_cmp, &dns_dnskey_print, 0),
+	DNS_RR_ENTRY(DNS_T_RRSIG,  "RRSIG",  0,                 &dns_rrsig_parse,  &dns_rrsig_push,  &dns_rrsig_cmp,  &dns_rrsig_print,  0),
+	DNS_RR_ENTRY(DNS_T_NSEC,   "NSEC",   0,                 &dns_nsec_parse,   &dns_nsec_push,   &dns_nsec_cmp,   &dns_nsec_print,   0),
+	DNS_RR_ENTRY(DNS_T_NSEC3,  "NSEC3",  0,                 &dns_nsec3_parse,  &dns_nsec3_push,  &dns_nsec3_cmp,  &dns_nsec3_print,  0),
+	DNS_RR_ENTRY(DNS_T_TLSA,   "TLSA",   0,                 &dns_tlsa_parse,   &dns_tlsa_push,   &dns_tlsa_cmp,   &dns_tlsa_print,   0),
+	DNS_RR_ENTRY(DNS_T_SVCB,   "SVCB",   0,                 &dns_svcb_parse,   &dns_svcb_push,   &dns_svcb_cmp,   &dns_svcb_print,   0),
+	DNS_RR_ENTRY(DNS_T_HTTPS,  "HTTPS",  0,                 &dns_svcb_parse,   &dns_svcb_push,   &dns_svcb_cmp,   &dns_svcb_print,   0),
+	DNS_RR_ENTRY(DNS_T_CAA,    "CAA",    0,                 &dns_caa_parse,    &dns_caa_push,    &dns_caa_cmp,    &dns_caa_print,    0),
+	DNS_RR_ENTRY(DNS_T_URI,    "URI",    0,                 &dns_uri_parse,    &dns_uri_push,    &dns_uri_cmp,    &dns_uri_print,    0),
+	DNS_RR_ENTRY(DNS_T_AXFR,   "AXFR",   0,                 0,                 0,                0,               0,                 0),
+#undef DNS_RR_ENTRY
 }; /* dns_rrtypes[] */
 
 static const struct dns_rrtype *dns_rrtype(enum dns_type type) {
@@ -10162,7 +10171,7 @@ struct {
 	const char *qname;
 	enum dns_type qtype;
 
-	int (*sort)();
+	int (*sort)(struct dns_rr *, struct dns_rr *, struct dns_rr_i *, struct dns_packet *);
 
 	int verbose;
 
@@ -10858,7 +10867,7 @@ static int show_hints(int argc, char *argv[]) {
 
 static int resolve_query(int argc DNS_NOTUSED, char *argv[]) {
 	_Bool recurse = !!strstr(argv[0], "recurse");
-	struct dns_hints *(*hints)() = (recurse)? &dns_hints_root : &dns_hints_local;
+	struct dns_hints *(*hints)(struct dns_resolv_conf *, int *) = (recurse)? &dns_hints_root : &dns_hints_local;
 	struct dns_resolver *R;
 	struct dns_packet *ans;
 	const struct dns_stat *st;
@@ -10906,7 +10915,7 @@ static int resolve_query(int argc DNS_NOTUSED, char *argv[]) {
 
 static int resolve_addrinfo(int argc DNS_NOTUSED, char *argv[]) {
 	_Bool recurse = !!strstr(argv[0], "recurse");
-	struct dns_hints *(*hints)() = (recurse)? &dns_hints_root : &dns_hints_local;
+	struct dns_hints *(*hints)(struct dns_resolv_conf *, int *) = (recurse)? &dns_hints_root : &dns_hints_local;
 	struct dns_resolver *res = NULL;
 	struct dns_addrinfo *ai = NULL;
 	struct addrinfo ai_hints = { .ai_family = PF_UNSPEC, .ai_socktype = SOCK_STREAM, .ai_flags = AI_CANONNAME };
@@ -11095,7 +11104,7 @@ static int sizes(int argc DNS_NOTUSED, char *argv[] DNS_NOTUSED) {
 } /* sizes() */
 
 
-static const struct { const char *cmd; int (*run)(); const char *help; } cmds[] = {
+static const struct { const char *cmd; int (*run)(int, char *[]); const char *help; } cmds[] = {
 	{ "parse-packet",	&parse_packet,		"parse binary packet from stdin" },
 	{ "parse-domain",	&parse_domain,		"anchor and iteratively cleave domain" },
 	{ "trim-domain",	&trim_domain,		"trim and anchor domain name" },
