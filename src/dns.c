@@ -3661,6 +3661,7 @@ struct dns_opt *dns_opt_init(struct dns_opt *opt, size_t size) {
 
 	opt->rcode   = 0;
 	opt->version = 0;
+	opt->flags   = 0;
 	opt->maxudp  = 0;
 
 	return opt;
