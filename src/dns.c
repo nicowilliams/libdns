@@ -9943,38 +9943,19 @@ enum dns_type dns_itype(const char *name) {
 } /* dns_itype() */
 
 
-static char dns_opcodes[16][16] = {
+static const char dns_opcodes[16][16] = {
 	[DNS_OP_QUERY]  = "QUERY",
 	[DNS_OP_IQUERY] = "IQUERY",
 	[DNS_OP_STATUS] = "STATUS",
+	[3]             = "3",
 	[DNS_OP_NOTIFY] = "NOTIFY",
 	[DNS_OP_UPDATE] = "UPDATE",
+	[6] = "6", [7] = "7", [8] = "8", [9] = "9",
+	[10] = "10", [11] = "11", [12] = "12", [13] = "13", [14] = "14", [15] = "15",
 };
 
-static const char *dns__strcode(int code, volatile char *dst, size_t lim) {
-	char _tmp[48] = "";
-	struct dns_buf tmp;
-	size_t p;
-
-	assert(lim > 0);
-	dns_b_fmtju(dns_b_into(&tmp, _tmp, DNS_PP_MIN(sizeof _tmp, lim - 1)), code, 0);
-
-	/* copy downwards so first byte is copied last (see below) */
-	p = (size_t)(tmp.p - tmp.base);
-	dst[p] = '\0';
-	while (p--)
-		dst[p] = _tmp[p];
-
-	return (const char *)dst;
-}
-
 const char *dns_stropcode(enum dns_opcode opcode) {
-	opcode = (unsigned)opcode % lengthof(dns_opcodes);
-
-	if ('\0' == dns_opcodes[opcode][0])
-		return dns__strcode(opcode, dns_opcodes[opcode], sizeof dns_opcodes[opcode]);
-
-	return dns_opcodes[opcode];
+	return dns_opcodes[(unsigned)opcode % lengthof(dns_opcodes)];
 } /* dns_stropcode() */
 
 
@@ -9996,7 +9977,7 @@ enum dns_opcode dns_iopcode(const char *name) {
 } /* dns_iopcode() */
 
 
-static char dns_rcodes[32][16] = {
+static const char dns_rcodes[32][16] = {
 	[DNS_RC_NOERROR]  = "NOERROR",
 	[DNS_RC_FORMERR]  = "FORMERR",
 	[DNS_RC_SERVFAIL] = "SERVFAIL",
@@ -10008,17 +9989,17 @@ static char dns_rcodes[32][16] = {
 	[DNS_RC_NXRRSET]  = "NXRRSET",
 	[DNS_RC_NOTAUTH]  = "NOTAUTH",
 	[DNS_RC_NOTZONE]  = "NOTZONE",
+	[11] = "11", [12] = "12", [13] = "13", [14] = "14", [15] = "15",
 	/* EDNS(0) extended RCODEs ... */
 	[DNS_RC_BADVERS]  = "BADVERS",
+	[17] = "17", [18] = "18", [19] = "19",
+	[20] = "20", [21] = "21", [22] = "22", [23] = "23",
+	[24] = "24", [25] = "25", [26] = "26", [27] = "27",
+	[28] = "28", [29] = "29", [30] = "30", [31] = "31",
 };
 
 const char *dns_strrcode(enum dns_rcode rcode) {
-	rcode = (unsigned)rcode % lengthof(dns_rcodes);
-
-	if ('\0' == dns_rcodes[rcode][0])
-		return dns__strcode(rcode, dns_rcodes[rcode], sizeof dns_rcodes[rcode]);
-
-	return dns_rcodes[rcode];
+	return dns_rcodes[(unsigned)rcode % lengthof(dns_rcodes)];
 } /* dns_strrcode() */
 
 
