@@ -8,7 +8,7 @@ LDFLAGS += -L/usr/local/libyaml/lib
 rfc4408-tests: rfc4408-tests.c ../src/cache.c ../src/zone.c ../src/spf.c ../src/dns.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) -o $@ $^ -lyaml $(LIBS)
 
-%.c: %.rl
+../src/%.c: ../src/%.rl
 	ragel -C -o $@ $<
 
 # Tests that link with dns.c
