@@ -1093,21 +1093,23 @@ static void unknown_comp(struct spf_sbuf *sbuf, struct spf_unknown *unknown) {
 } /* unknown_comp() */
 
 
-static const struct {
-	void (*comp)();
-} spf_term[] = {
-	[SPF_ALL]     = { &all_comp },
-	[SPF_INCLUDE] = { &include_comp },
-	[SPF_A]       = { &a_comp },
-	[SPF_MX]      = { &mx_comp },
-	[SPF_PTR]     = { &ptr_comp },
-	[SPF_IP4]     = { &ip4_comp },
-	[SPF_IP6]     = { &ip6_comp },
-	[SPF_EXISTS]  = { &exists_comp },
+typedef void (*spf_term_comp_f)(struct spf_sbuf *, void *);
 
-	[SPF_REDIRECT] = { &redirect_comp },
-	[SPF_EXP]      = { &exp_comp },
-	[SPF_UNKNOWN]  = { &unknown_comp },
+static const struct {
+	spf_term_comp_f comp;
+} spf_term[] = {
+	[SPF_ALL]     = { (spf_term_comp_f)&all_comp },
+	[SPF_INCLUDE] = { (spf_term_comp_f)&include_comp },
+	[SPF_A]       = { (spf_term_comp_f)&a_comp },
+	[SPF_MX]      = { (spf_term_comp_f)&mx_comp },
+	[SPF_PTR]     = { (spf_term_comp_f)&ptr_comp },
+	[SPF_IP4]     = { (spf_term_comp_f)&ip4_comp },
+	[SPF_IP6]     = { (spf_term_comp_f)&ip6_comp },
+	[SPF_EXISTS]  = { (spf_term_comp_f)&exists_comp },
+
+	[SPF_REDIRECT] = { (spf_term_comp_f)&redirect_comp },
+	[SPF_EXP]      = { (spf_term_comp_f)&exp_comp },
+	[SPF_UNKNOWN]  = { (spf_term_comp_f)&unknown_comp },
 }; /* spf_term[] */
 
 static char *term_comp(struct spf_sbuf *sbuf, void *term) {
