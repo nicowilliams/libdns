@@ -2847,6 +2847,9 @@ static unsigned short dns_rr_i_skip(unsigned short rp, struct dns_rr_i *i, struc
 
 	r0.section = dns_rr_section(rp, P);
 
+	if (!i->sort)
+		return P->end;
+
 	rp = (i->sort == &dns_rr_i_packet)? dns_rr_skip(rp, P) : 12;
 
 	for (; rp < P->end; rp = dns_rr_skip(rp, P)) {
