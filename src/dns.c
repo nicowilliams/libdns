@@ -452,8 +452,12 @@ static inline unsigned dns_atomic_fetch_sub(dns_atomic_t *i) {
  || defined(__NetBSD__)		\
  || defined(__APPLE__)
 #define DNS_RANDOM	arc4random
-#elif __linux
-#define DNS_RANDOM	random
+#elif _WIN32
+#define DNS_RANDOM	RtlGenRandom
+#elif defined(HAVE_GETRANDOM) || defined(__linux__)
+#define DNS_RANDOM	getrandom
+#elif defined(HAVE_GETENTROPY)
+#define DNS_RANDOM	getentropy
 #else
 #define DNS_RANDOM	rand
 #endif
@@ -463,25 +467,56 @@ static inline unsigned dns_atomic_fetch_sub(dns_atomic_t *i) {
 #define DNS_RANDOM_random	2
 #define DNS_RANDOM_rand		3
 #define DNS_RANDOM_RAND_bytes	4
+#define DNS_RANDOM_getrandom	5
+#define DNS_RANDOM_getentropy	6
+#define DNS_RANDOM_RtlGenRandom	7
 
 #define DNS_RANDOM_OPENSSL	(DNS_RANDOM_RAND_bytes == DNS_PP_XPASTE(DNS_RANDOM_, DNS_RANDOM))
+#define DNS_RANDOM_SYSRANDOM	(DNS_RANDOM_getrandom == DNS_PP_XPASTE(DNS_RANDOM_, DNS_RANDOM) || \
+				 DNS_RANDOM_getentropy == DNS_PP_XPASTE(DNS_RANDOM_, DNS_RANDOM) || \
+				 DNS_RANDOM_RtlGenRandom == DNS_PP_XPASTE(DNS_RANDOM_, DNS_RANDOM))
 
 #if DNS_RANDOM_OPENSSL
 #include <openssl/rand.h>
 #endif
 
+#if DNS_RANDOM_getrandom == DNS_PP_XPASTE(DNS_RANDOM_, DNS_RANDOM)
+#include <sys/random.h>
+#endif
+
+#if _WIN32
+#include <ntsecapi.h>
+#endif
+
 static unsigned dns_random_(void) {
-#if DNS_RANDOM_OPENSSL
 	unsigned r;
+#if DNS_RANDOM_OPENSSL
 	_Bool ok;
 
 	ok = (1 == RAND_bytes((unsigned char *)&r, sizeof r));
 	assert(ok && "1 == RAND_bytes()");
+#elif DNS_RANDOM_getrandom == DNS_PP_XPASTE(DNS_RANDOM_, DNS_RANDOM)
+	ssize_t n;
 
-	return r;
+	n = getrandom(&r, sizeof r, 0);
+	assert(n == sizeof r && "getrandom()");
+	(void)n;
+#elif DNS_RANDOM_getentropy == DNS_PP_XPASTE(DNS_RANDOM_, DNS_RANDOM)
+	int ret;
+
+	ret = getentropy(&r, sizeof r);
+	assert(ret == 0 && "getentropy()");
+	(void)ret;
+#elif _WIN32
+	BOOLEAN ok;
+
+	ok = RtlGenRandom(&r, sizeof r);
+	assert(ok && "RtlGenRandom()");
+	(void)ok;
 #else
-	return DNS_RANDOM();
+	r = DNS_RANDOM();
 #endif
+	return r;
 } /* dns_random_() */
 
 dns_random_f **dns_random_p(void) {
