@@ -1602,8 +1602,10 @@ struct dns_packet *dns_p_make(size_t len, int *error) {
 	struct dns_packet *P;
 	size_t size = dns_p_calcsize(len);
 
-	if (!(P = dns_p_init(malloc(size), size)))
-		*error = dns_syerr();
+	if (!(P = dns_p_init(malloc(size), size))) {
+		if (error)
+			*error = dns_syerr();
+	}
 
 	return P;
 } /* dns_p_make() */
