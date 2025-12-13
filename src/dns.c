@@ -1154,12 +1154,15 @@ static inline _Bool dns_isspace(unsigned char c) {
 
 
 static int dns_poll(int fd, short events, int timeout) {
-	fd_set rset, wset;
-
 	if (!events)
 		return 0;
 
-	assert(fd >= 0 && (unsigned)fd < FD_SETSIZE);
+#if _WIN32
+	/*
+	 * Windows: use select() since WSAPoll has issues with certain socket states.
+	 * Note: timeout is in seconds for this internal API.
+	 */
+	fd_set rset, wset;
 
 	FD_ZERO(&rset);
 	FD_ZERO(&wset);
@@ -1171,6 +1174,24 @@ static int dns_poll(int fd, short events, int timeout) {
 		FD_SET(fd, &wset);
 
 	select(fd + 1, &rset, &wset, 0, (timeout >= 0)? &(struct timeval){ timeout, 0 } : NULL);
+#else
+	/*
+	 * Unix: use poll() for better scalability (no FD_SETSIZE limit).
+	 */
+	struct pollfd pfd;
+
+	pfd.fd = fd;
+	pfd.events = 0;
+	pfd.revents = 0;
+
+	if (events & DNS_POLLIN)
+		pfd.events |= POLLIN;
+
+	if (events & DNS_POLLOUT)
+		pfd.events |= POLLOUT;
+
+	poll(&pfd, 1, (timeout >= 0) ? timeout * 1000 : -1);
+#endif
 
 	return 0;
 } /* dns_poll() */
@@ -9956,6 +9977,326 @@ size_t dns_ai_print(void *_dst, size_t lim, struct addrinfo *ent, struct dns_add
 const struct dns_stat *dns_ai_stat(struct dns_addrinfo *ai) {
 	return (ai->res)? dns_res_stat(ai->res) : &ai->st;
 } /* dns_ai_stat() */
+
+
+/*
+ * S Y N C H R O N O U S  I N T E R F A C E S
+ *
+ * Blocking wrappers similar to getaddrinfo(3) and getnameinfo(3).
+ *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+#define DNS_GETADDRINFO_DEFAULT_TIMEOUT 30
+
+static int dns_poll_ms(int fd, short events, int timeout_ms) {
+	if (!events)
+		return 0;
+
+#if _WIN32
+	fd_set rset, wset;
+	struct timeval tv;
+
+	FD_ZERO(&rset);
+	FD_ZERO(&wset);
+
+	if (events & DNS_POLLIN)
+		FD_SET(fd, &rset);
+
+	if (events & DNS_POLLOUT)
+		FD_SET(fd, &wset);
+
+	if (timeout_ms >= 0) {
+		tv.tv_sec = timeout_ms / 1000;
+		tv.tv_usec = (timeout_ms % 1000) * 1000;
+		return select(fd + 1, &rset, &wset, 0, &tv);
+	} else {
+		return select(fd + 1, &rset, &wset, 0, NULL);
+	}
+#else
+	struct pollfd pfd;
+
+	pfd.fd = fd;
+	pfd.events = 0;
+	pfd.revents = 0;
+
+	if (events & DNS_POLLIN)
+		pfd.events |= POLLIN;
+
+	if (events & DNS_POLLOUT)
+		pfd.events |= POLLOUT;
+
+	return poll(&pfd, 1, timeout_ms);
+#endif
+} /* dns_poll_ms() */
+
+
+static int dns_ai_waitfor(struct dns_addrinfo *ai, int timeout_sec) {
+	time_t deadline, now;
+	int pollfd, events, remaining_ms;
+
+	if (timeout_sec <= 0)
+		timeout_sec = DNS_GETADDRINFO_DEFAULT_TIMEOUT;
+
+	deadline = time(NULL) + timeout_sec;
+
+	while ((now = time(NULL)) < deadline) {
+		pollfd = dns_ai_pollfd(ai);
+		events = dns_ai_events(ai);
+
+		if (pollfd < 0 || !events)
+			return 0; /* ready or done */
+
+		remaining_ms = (int)((deadline - now) * 1000);
+		if (remaining_ms <= 0)
+			break;
+
+		dns_poll_ms(pollfd, events, remaining_ms);
+	}
+
+	return (time(NULL) >= deadline) ? ETIMEDOUT : 0;
+} /* dns_ai_waitfor() */
+
+
+int dns_getaddrinfo(const char *host, const char *serv, const struct addrinfo *hints, struct addrinfo **res, int timeout) {
+	struct dns_resolver *resolver = NULL;
+	struct dns_addrinfo *ai = NULL;
+	struct addrinfo *head = NULL, **tail = &head, *ent;
+	int error;
+
+	*res = NULL;
+
+	if (!host)
+		return EAI_NONAME;
+
+	/* Create stub resolver using system configuration */
+	resolver = dns_res_stub(dns_opts(), &error);
+	if (!resolver) {
+		switch (error) {
+		case ENOMEM:
+			return EAI_MEMORY;
+		default:
+			return EAI_FAIL;
+		}
+	}
+
+	/* Open addrinfo iterator */
+	ai = dns_ai_open(host, serv, DNS_T_A, hints, resolver, &error);
+	if (!ai) {
+		dns_res_close(resolver);
+		switch (error) {
+		case ENOMEM:
+			return EAI_MEMORY;
+		default:
+			return EAI_FAIL;
+		}
+	}
+
+	/* Iterate results with timeout */
+	do {
+		error = dns_ai_nextent(&ent, ai);
+
+		switch (error) {
+		case 0:
+			/* Link entry to result list */
+			*tail = ent;
+			tail = &ent->ai_next;
+			break;
+
+		case ENOENT:
+			/* No more results */
+			break;
+
+		case DNS_EAGAIN:
+			/* Need to wait for I/O */
+			if ((error = dns_ai_waitfor(ai, timeout))) {
+				/* Timeout or error */
+				dns_ai_close(ai);
+				dns_res_close(resolver);
+				dns_freeaddrinfo(head);
+				return (error == ETIMEDOUT) ? EAI_AGAIN : EAI_FAIL;
+			}
+			break;
+
+		default:
+			/* Other error */
+			dns_ai_close(ai);
+			dns_res_close(resolver);
+			dns_freeaddrinfo(head);
+			switch (error) {
+			case ENOMEM:
+				return EAI_MEMORY;
+			case ENOENT:
+				return EAI_NONAME;
+			default:
+				return EAI_FAIL;
+			}
+		}
+	} while (error != ENOENT);
+
+	dns_ai_close(ai);
+	dns_res_close(resolver);
+
+	if (!head)
+		return EAI_NONAME;
+
+	*res = head;
+	return 0;
+} /* dns_getaddrinfo() */
+
+
+void dns_freeaddrinfo(struct addrinfo *res) {
+	struct addrinfo *next;
+
+	while (res) {
+		next = res->ai_next;
+		free(res);
+		res = next;
+	}
+} /* dns_freeaddrinfo() */
+
+
+int dns_getnameinfo(const struct sockaddr *sa, socklen_t salen, char *host, size_t hostlen, char *serv, size_t servlen, int flags, int timeout) {
+	struct dns_resolver *resolver = NULL;
+	struct dns_packet *ans = NULL;
+	struct dns_rr rr;
+	struct dns_rr_i rr_i;
+	union dns_any any;
+	char qname[DNS_D_MAXNAME + 1];
+	time_t deadline, now;
+	int error, pollfd, events, remaining_ms;
+	(void)salen;
+
+	if (timeout <= 0)
+		timeout = DNS_GETADDRINFO_DEFAULT_TIMEOUT;
+
+	deadline = time(NULL) + timeout;
+
+	/* Handle service lookup (port -> service name) */
+	if (serv && servlen > 0) {
+		unsigned short port = 0;
+
+		if (sa->sa_family == AF_INET) {
+			port = ntohs(((const struct sockaddr_in *)sa)->sin_port);
+		} else if (sa->sa_family == AF_INET6) {
+			port = ntohs(((const struct sockaddr_in6 *)sa)->sin6_port);
+		}
+
+		if (flags & NI_NUMERICSERV) {
+			snprintf(serv, servlen, "%u", port);
+		} else {
+			/* For now, just return numeric (service lookup would need /etc/services) */
+			snprintf(serv, servlen, "%u", port);
+		}
+	}
+
+	/* Handle host lookup */
+	if (!host || hostlen == 0)
+		return 0;
+
+	/* If numeric requested, just format the address */
+	if (flags & NI_NUMERICHOST) {
+		const void *addr;
+
+		if (sa->sa_family == AF_INET) {
+			addr = &((const struct sockaddr_in *)sa)->sin_addr;
+		} else if (sa->sa_family == AF_INET6) {
+			addr = &((const struct sockaddr_in6 *)sa)->sin6_addr;
+		} else {
+			return EAI_FAMILY;
+		}
+
+		if (!dns_inet_ntop(sa->sa_family, addr, host, hostlen))
+			return EAI_OVERFLOW;
+
+		return 0;
+	}
+
+	/* Build reverse DNS name (in-addr.arpa or ip6.arpa) */
+	if (!dns_ptr_qname(qname, sizeof qname, sa->sa_family, dns_sa_addr(sa->sa_family, sa, NULL))) {
+		/* Can't build PTR name, return numeric if allowed */
+		if (flags & NI_NAMEREQD)
+			return EAI_NONAME;
+
+		return dns_getnameinfo(sa, salen, host, hostlen, NULL, 0, flags | NI_NUMERICHOST, timeout);
+	}
+
+	/* Create stub resolver */
+	resolver = dns_res_stub(dns_opts(), &error);
+	if (!resolver)
+		return (error == ENOMEM) ? EAI_MEMORY : EAI_FAIL;
+
+	/* Submit PTR query */
+	if ((error = dns_res_submit(resolver, qname, DNS_T_PTR, DNS_C_IN))) {
+		dns_res_close(resolver);
+		return (error == ENOMEM) ? EAI_MEMORY : EAI_FAIL;
+	}
+
+	/* Wait for response with timeout */
+	while ((error = dns_res_check(resolver)) == DNS_EAGAIN) {
+		now = time(NULL);
+		if (now >= deadline) {
+			dns_res_close(resolver);
+			if (flags & NI_NAMEREQD)
+				return EAI_AGAIN;
+			return dns_getnameinfo(sa, salen, host, hostlen, NULL, 0, flags | NI_NUMERICHOST, 0);
+		}
+
+		pollfd = dns_res_pollfd(resolver);
+		events = dns_res_events(resolver);
+		remaining_ms = (int)((deadline - now) * 1000);
+
+		if (pollfd >= 0 && events)
+			dns_poll_ms(pollfd, events, remaining_ms);
+	}
+
+	if (error) {
+		dns_res_close(resolver);
+		if (flags & NI_NAMEREQD)
+			return EAI_NONAME;
+		return dns_getnameinfo(sa, salen, host, hostlen, NULL, 0, flags | NI_NUMERICHOST, 0);
+	}
+
+	/* Get answer packet */
+	ans = dns_res_fetch(resolver, &error);
+	dns_res_close(resolver);
+
+	if (!ans) {
+		if (flags & NI_NAMEREQD)
+			return EAI_NONAME;
+		return dns_getnameinfo(sa, salen, host, hostlen, NULL, 0, flags | NI_NUMERICHOST, 0);
+	}
+
+	/* Find PTR record in answer */
+	memset(&rr_i, 0, sizeof rr_i);
+	rr_i.section = DNS_S_AN;
+	rr_i.type = DNS_T_PTR;
+
+	if (!dns_rr_grep(&rr, 1, &rr_i, ans, &error)) {
+		free(ans);
+		if (flags & NI_NAMEREQD)
+			return EAI_NONAME;
+		return dns_getnameinfo(sa, salen, host, hostlen, NULL, 0, flags | NI_NUMERICHOST, 0);
+	}
+
+	/* Parse PTR record */
+	if (dns_any_parse(&any, &rr, ans)) {
+		free(ans);
+		if (flags & NI_NAMEREQD)
+			return EAI_NONAME;
+		return dns_getnameinfo(sa, salen, host, hostlen, NULL, 0, flags | NI_NUMERICHOST, 0);
+	}
+
+	/* Copy hostname (remove trailing dot if present) */
+	dns_strlcpy(host, any.ptr.host, hostlen);
+	{
+		size_t len = strlen(host);
+		if (len > 0 && host[len - 1] == '.')
+			host[len - 1] = '\0';
+	}
+
+	free(ans);
+	return 0;
+} /* dns_getnameinfo() */
 
 
 /*
