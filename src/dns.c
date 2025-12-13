@@ -10286,8 +10286,15 @@ static struct dns_resolv_conf *resconf(void) {
 	if (!(resconf = dns_resconf_open(&error)))
 		panic("dns_resconf_open: %s", dns_strerror(error));
 
+#if _WIN32
+	if (!MAIN.resconf.count) {
+		if ((error = dns_resconf_loadwin(resconf)))
+			panic("dns_resconf_loadwin: %s", dns_strerror(error));
+	}
+#else
 	if (!MAIN.resconf.count)
 		MAIN.resconf.path[MAIN.resconf.count++]	= "/etc/resolv.conf";
+#endif
 
 	for (i = 0; i < MAIN.resconf.count; i++) {
 		path	= MAIN.resconf.path[i];
@@ -10301,6 +10308,7 @@ static struct dns_resolv_conf *resconf(void) {
 			panic("%s: %s", path, dns_strerror(error));
 	}
 
+#if !_WIN32
 	for (i = 0; i < MAIN.nssconf.count; i++) {
 		path	= MAIN.nssconf.path[i];
 
@@ -10313,7 +10321,6 @@ static struct dns_resolv_conf *resconf(void) {
 			panic("%s: %s", path, dns_strerror(error));
 	}
 
-#if !_WIN32
 	if (!MAIN.nssconf.count) {
 		path = "/etc/nsswitch.conf";
 
