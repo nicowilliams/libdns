@@ -2575,10 +2575,10 @@ int dns_rr_parse(struct dns_rr *rr, unsigned short src, struct dns_packet *P) {
 	if (P->end - p < 4)
 		goto invalid;
 
-	rr->ttl = ((0xff & P->data[p + 0]) << 24)
-	        | ((0xff & P->data[p + 1]) << 16)
-	        | ((0xff & P->data[p + 2]) << 8)
-	        | ((0xff & P->data[p + 3]) << 0);
+	rr->ttl = ((unsigned)(0xff & P->data[p + 0]) << 24)
+	        | ((unsigned)(0xff & P->data[p + 1]) << 16)
+	        | ((unsigned)(0xff & P->data[p + 2]) << 8)
+	        | ((unsigned)(0xff & P->data[p + 3]) << 0);
 	if (rr->type != DNS_T_OPT)
 		rr->ttl = DNS_PP_MIN(rr->ttl, 0x7fffffffU);
 
@@ -3747,9 +3747,14 @@ size_t dns_ptr_cname(void *dst, size_t lim, struct dns_ptr *ptr) {
 
 
 int dns_sshfp_parse(struct dns_sshfp *fp, struct dns_rr *rr, struct dns_packet *P) {
-	unsigned p = rr->rd.p, pe = rr->rd.p + rr->rd.len;
+	unsigned p = rr->rd.p, pe;
 
-	if (pe - p < 2)
+	/* Validate RDATA bounds against packet */
+	if (rr->rd.len > P->end - rr->rd.p)
+		return DNS_EILLEGAL;
+	pe = rr->rd.p + rr->rd.len;
+
+	if (rr->rd.len < 2)
 		return DNS_EILLEGAL;
 
 	fp->algo = P->data[p++];
@@ -4037,6 +4042,9 @@ int dns_any_parse(union dns_any *any, struct dns_rr *rr, struct dns_packet *P) {
 	if ((t = dns_rrtype(rr->type)))
 		return t->parse(dns_any_reinit(any, t), rr, P);
 
+	/* Validate RDATA bounds */
+	if (rr->rd.len > P->end - rr->rd.p)
+		return DNS_EILLEGAL;
 	if (rr->rd.len > any->rdata.size)
 		return DNS_EILLEGAL;
 
