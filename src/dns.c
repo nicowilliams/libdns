@@ -10679,6 +10679,7 @@ static int send_query(int argc, char *argv[]) {
 
 	print_packet(A, stdout);
 
+	free(A);
 	dns_so_close(so);
 
 	return 0;
