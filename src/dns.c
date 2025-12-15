@@ -43,11 +43,7 @@
 
 #include <limits.h>		/* INT_MAX */
 #include <stddef.h>		/* offsetof() */
-#ifdef _WIN32
-#define uint32_t unsigned int
-#else
-#include <stdint.h>		/* uint32_t */
-#endif
+#include <stdint.h>		/* uint8_t uint16_t uint32_t */
 #include <stdlib.h>		/* malloc(3) realloc(3) free(3) rand(3) random(3) arc4random(3) */
 #include <stdio.h>		/* FILE fopen(3) fclose(3) getc(3) rewind(3) */
 #include <string.h>		/* memcpy(3) strlen(3) memmove(3) memchr(3) memcmp(3) strchr(3) strsep(3) strcspn(3) */
@@ -77,7 +73,13 @@
 #ifndef EAI_OVERFLOW
 #define EAI_OVERFLOW WSAENAMETOOLONG
 #endif
+#if defined _MSC_VER
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
 #else
+#include <sys/types.h>	/* ssize_t for mingw */
+#endif
+#else /* !_WIN32 */
 #include <sys/types.h>		/* FD_SETSIZE socklen_t */
 #include <sys/select.h>		/* FD_ZERO FD_SET fd_set select(2) */
 #include <sys/socket.h>		/* AF_INET AF_INET6 AF_UNIX struct sockaddr struct sockaddr_in struct sockaddr_in6 socket(2) */
@@ -417,6 +419,8 @@ const char *dns_strerror(int error) {
 #ifndef DNS_ATOMIC_FETCH_ADD
 #if HAVE___ATOMIC_FETCH_ADD && __GCC_ATOMIC_LONG_LOCK_FREE == 2
 #define DNS_ATOMIC_FETCH_ADD(i) __atomic_fetch_add((i), 1, __ATOMIC_RELAXED)
+#elif _WIN32
+#define DNS_ATOMIC_FETCH_ADD(i) InterlockedExchangeAdd((long *)(i), 1)
 #else
 #pragma message("no atomic_fetch_add available")
 #define DNS_ATOMIC_FETCH_ADD(i) ((*(i))++)
@@ -426,6 +430,8 @@ const char *dns_strerror(int error) {
 #ifndef DNS_ATOMIC_FETCH_SUB
 #if HAVE___ATOMIC_FETCH_SUB && __GCC_ATOMIC_LONG_LOCK_FREE == 2
 #define DNS_ATOMIC_FETCH_SUB(i) __atomic_fetch_sub((i), 1, __ATOMIC_RELAXED)
+#elif _WIN32
+#define DNS_ATOMIC_FETCH_SUB(i) InterlockedExchangeAdd((long *)(i), -1)
 #else
 #pragma message("no atomic_fetch_sub available")
 #define DNS_ATOMIC_FETCH_SUB(i) ((*(i))--)
@@ -11575,6 +11581,13 @@ int main(int argc, char **argv) {
 	const char *progname	= argv[0];
 	unsigned i;
 	int ch;
+
+#if _WIN32
+	{
+		WSADATA wsaData;
+		WSAStartup(MAKEWORD(2, 2), &wsaData);
+	}
+#endif
 
 	while (-1 != (ch = getopt(argc, argv, "q:t:c:n:l:z:s:ADvVh"))) {
 		switch (ch) {
