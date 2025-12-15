@@ -134,7 +134,7 @@ static void test_caa(void) {
 		free(P);
 		return;
 	}
-	if (strcmp(any.caa.value, "pki.goog") != 0) {
+	if (strcmp((const char *)any.caa.value, "pki.goog") != 0) {
 		TEST_FAIL("value: expected 'pki.goog', got '%s'", any.caa.value);
 		free(P);
 		return;
