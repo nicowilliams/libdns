@@ -27,7 +27,12 @@
 #include <stdlib.h>	/* malloc(3) free(3) */
 #include <stdio.h>	/* FILE fprintf(3) */
 
-#include <string.h>	/* strcasecmp(3) memset(3) */
+#include <string.h>	/* memset(3) */
+#if _WIN32
+#define strcasecmp _stricmp
+#else
+#include <strings.h>	/* strcasecmp(3) */
+#endif
 
 #include <errno.h>	/* errno */
 
@@ -291,7 +296,11 @@ int cache_dumpfile(struct cache *C, FILE *fp) {
 
 #include <ctype.h>	/* tolower(3) */
 
+#if _WIN32
+#include <getopt.h>	/* getopt(3) */
+#else
 #include <unistd.h>	/* getopt(3) */
+#endif
 
 
 struct {

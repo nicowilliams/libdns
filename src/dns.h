@@ -27,6 +27,7 @@
 #define DNS_H
 
 #include <stddef.h>		/* size_t offsetof() */
+#include <stdint.h>		/* uint8_t uint16_t uint32_t */
 #include <stdio.h>		/* FILE */
 
 #include <string.h>		/* strlen(3) */
