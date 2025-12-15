@@ -111,7 +111,10 @@ static struct rrset *cache_find(struct cache *C, const char *name, enum dns_type
 	if ((error = rrset_init(set, name, type)))
 		goto error;
 
-	assert(!RB_INSERT(rrcache, &C->root, set));
+	{
+		struct rrset *collision = RB_INSERT(rrcache, &C->root, set);
+		assert(!collision);
+	}
 
 	return set;
 syerr:
@@ -309,7 +312,8 @@ static struct dns_resolv_conf *resconf(void) {
 	int error;
 
 	if (!MAIN.resconf) {
-		assert(MAIN.resconf = dns_resconf_local(&error));
+		MAIN.resconf = dns_resconf_local(&error);
+		assert(MAIN.resconf);
 
 		MAIN.resconf->lookup[2] = MAIN.resconf->lookup[1];
 		MAIN.resconf->lookup[1] = MAIN.resconf->lookup[0];
@@ -323,8 +327,10 @@ static struct dns_resolv_conf *resconf(void) {
 static struct dns_hosts *hosts(void) {
 	int error;
 
-	if (!MAIN.hosts)
-		assert(MAIN.hosts = dns_hosts_local(&error));
+	if (!MAIN.hosts) {
+		MAIN.hosts = dns_hosts_local(&error);
+		assert(MAIN.hosts);
+	}
 
 	return MAIN.hosts;
 } /* hosts() */
@@ -333,8 +339,10 @@ static struct dns_hosts *hosts(void) {
 static struct dns_hints *hints(void) {
 	int error;
 
-	if (!MAIN.hints)
-		assert(MAIN.hints = dns_hints_local(resconf(), &error));
+	if (!MAIN.hints) {
+		MAIN.hints = dns_hints_local(resconf(), &error);
+		assert(MAIN.hints);
+	}
 
 	return MAIN.hints;
 } /* hints() */
@@ -344,8 +352,10 @@ static struct cache *cache(void) {
 	int error;
 
 	if (!MAIN.cache) {
-		assert(MAIN.cache = cache_open(&error));
-		assert(!cache_loadfile(MAIN.cache, stdin, MAIN.origin, MAIN.ttl));
+		MAIN.cache = cache_open(&error);
+		assert(MAIN.cache);
+		error = cache_loadfile(MAIN.cache, stdin, MAIN.origin, MAIN.ttl);
+		assert(!error);
 	}
 
 	return MAIN.cache;
@@ -443,20 +453,26 @@ int main(int argc, char **argv) {
 
 	if (argc > 0)
 		qname = argv[0];
-	if (argc > 1)
-		assert(qtype = dns_itype(argv[1]));
+	if (argc > 1) {
+		qtype = dns_itype(argv[1]);
+		assert(qtype);
+	}
 
 	if (qname) {
-		assert(res = dns_res_open(resconf(), hosts(), hints(), cache_resi(cache()), dns_opts(), &error));
+		res = dns_res_open(resconf(), hosts(), hints(), cache_resi(cache()), dns_opts(), &error);
+		assert(res);
 
-		assert(!dns_res_submit(res, qname, qtype, DNS_C_IN));
+		error = dns_res_submit(res, qname, qtype, DNS_C_IN);
+		assert(!error);
 
 		while ((error = dns_res_check(res))) {
 			assert(error == EAGAIN);
-			assert(!dns_res_poll(res, 5));
+			error = dns_res_poll(res, 5);
+			assert(!error);
 		}
 
-		assert((ans = dns_res_fetch(res, &error)));
+		ans = dns_res_fetch(res, &error);
+		assert(ans);
 
 		cache_showpkt(ans, stdout);
 
