@@ -17,13 +17,18 @@ ALL_CPPFLAGS = -DDNS_DEBUG -DDNS_MAIN $(CPPFLAGS)
 ALL_CFLAGS   = -std=gnu99 -Wall -Wextra -O2 -g -fstack-protector $(CFLAGS)
 ALL_LIBS     = $(LIBS)
 
-EXE_CC           = $(shell find $$(echo $${PATH} | tr ':' ' ') -maxdepth 1 -name \*mingw32-gcc -o -name gcc-\* | while read GCC; do echo $$($$GCC -v 2>&1 | tail -n1 | cut -d' ' -f3) $$GCC; done | sort -nr | head -n1 | cut -d' ' -f2)
+# Cross-compile for Windows from Unix, or native compile on Windows with MSYS2/MinGW
+ifeq ($(OS),Windows_NT)
+  EXE_CC         = gcc
+else
+  EXE_CC         = $(shell which x86_64-w64-mingw32-gcc i686-w64-mingw32-gcc 2>/dev/null | head -n1)
+endif
 EXE_CPPFLAGS     = $(ALL_CPPFLAGS)
 EXE_CFLAGS       =
 EXE_LIBS         =
 ALL_EXE_CPPFLAGS = $(EXE_CPPFLAGS)
 ALL_EXE_CFLAGS   = -std=gnu99 -Wall -O2 -g $(EXE_CFLAGS)
-ALL_EXE_LIBS     = -lws2_32 -lgdi32 $(EXE_LIBS)
+ALL_EXE_LIBS     = -lws2_32 -lgdi32 -liphlpapi $(EXE_LIBS)
 
 all: dns
 
