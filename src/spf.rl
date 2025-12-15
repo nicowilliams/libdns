@@ -1924,7 +1924,7 @@ struct spf_resolver {
 }; /* struct spf_resolver */
 
 
-static void vm_throw() __attribute__((__noreturn__));
+static void vm_throw(struct spf_vm *vm, int error) __attribute__((__noreturn__));
 static void vm_throw(struct spf_vm *vm, int error) {
 	_longjmp(vm->trap, (error)? error : EINVAL);
 } /* vm_throw() */
