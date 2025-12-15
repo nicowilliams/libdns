@@ -71,6 +71,12 @@
 #include <ws2tcpip.h>
 #include <iphlpapi.h>		/* GetNetworkParams FIXED_INFO */
 #pragma comment(lib, "IPHLPAPI.lib")
+#ifndef AI_NUMERICSERV
+#define AI_NUMERICSERV 0x0400
+#endif
+#ifndef EAI_OVERFLOW
+#define EAI_OVERFLOW WSAENAMETOOLONG
+#endif
 #else
 #include <sys/types.h>		/* FD_SETSIZE socklen_t */
 #include <sys/select.h>		/* FD_ZERO FD_SET fd_set select(2) */
@@ -205,7 +211,7 @@
  *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-#if _WIN32 || _WIN64
+#if defined _MSC_VER
 #define PRIuZ "Iu"
 #else
 #define PRIuZ "zu"
