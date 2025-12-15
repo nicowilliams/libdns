@@ -4237,7 +4237,8 @@ static struct dns_cache *mkcache(void) {
 	if (!MAIN.cache)
 		return NULL;
 
-	assert(cache = cache_open(&error));
+	cache = cache_open(&error);
+	assert(cache);
 
 	if ((error = cache_loadpath(cache, MAIN.cache, NULL, 0)))
 		panic("%s: %s", MAIN.cache, strerror(error));
@@ -4257,12 +4258,14 @@ static struct dns_resolv_conf *mkresconf(void) {
 		return resconf;
 
 	if (MAIN.resconf) {
-		assert(resconf = dns_resconf_open(&error));
+		resconf = dns_resconf_open(&error);
+		assert(resconf);
 
 		if ((error = dns_resconf_loadpath(resconf, MAIN.resconf)))
 			panic("%s: %s", MAIN.resconf, strerror(error));
 	} else {
-		assert(resconf = dns_resconf_local(&error));
+		resconf = dns_resconf_local(&error);
+		assert(resconf);
 
 		resconf->lookup[2] = resconf->lookup[1];
 		resconf->lookup[1] = resconf->lookup[0];
@@ -4314,10 +4317,13 @@ static int vm(const struct spf_env *env, const char *file) {
 	struct vm_sub sub;
 	int code, error;
 
-	if (file && strcmp(file, "-"))
-		assert((fp = fopen(file, "r")));
+	if (file && strcmp(file, "-")) {
+		fp = fopen(file, "r");
+		assert(fp);
+	}
 
-	assert((spf = spf_open(env, mkres(), NULL, &error)));
+	spf = spf_open(env, mkres(), NULL, &error);
+	assert(spf);
 	vm = &spf->vm;
 	vm->end = 0;
 
@@ -4428,7 +4434,8 @@ static int check(int argc, char *argv[], const struct spf_env *env) {
 	const struct spf_info *info;
 	int error;
 
-	assert((spf = spf_open(env, mkres(), NULL, &error)));
+	spf = spf_open(env, mkres(), NULL, &error);
+	assert(spf);
 
 	while ((error = spf_check(spf))) {
 		switch (error) {
